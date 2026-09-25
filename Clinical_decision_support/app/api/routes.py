@@ -7,6 +7,8 @@ from app.api.schemas import (
     EncounterRequest,
     EncounterContextRequest,
     EncounterResponse,
+    CodingRequest,
+    CodingResponse,
     KnowledgeBaseRequest,
     KnowledgeBaseResponse,
     PatientAnalysisRequest,
@@ -14,6 +16,8 @@ from app.api.schemas import (
 )
 from app.agent.encounter_agent import EncounterAgent
 from app.services.clinical_service import ClinicalAnalysisService
+from cpt_coder import get_cpt_candidate_sets, get_cpt_codes, infer_documented_procedures
+from icd10_coder import get_icd10_codes
 
 
 router = APIRouter()
@@ -149,3 +153,41 @@ def retrieve_knowledge(request: KnowledgeBaseRequest):
         raise HTTPException(status_code=500, detail=f"Knowledge-base retrieval failed: {error}") from error
 
     return KnowledgeBaseResponse(query=request.query, top_k=request.top_k, context=context)
+
+
+@router.post("/codes", response_model=CodingResponse, tags=["coding"])
+def match_codes(request: CodingRequest):
+    """Return diagnosis codes and CPT/HCPCS codes for explicitly supplied items."""
+    try:
+        icd10 = get_icd10_codes(request.conditions, threshold=80)
+        procedures = list(request.procedures) + infer_documented_procedures(request.documentation)
+        documentation = request.documentation.lower()
+        if any(term in documentation for term in ("a1c", "hba1c", "hemoglobin a1c")):
+            procedures.append("A1C Test")
+        if (
+            ("chest x-ray" in documentation or "chest x ray" in documentation)
+            and any(term in documentation for term in ("two view", "to view", "2 view"))
+        ):
+            procedures.append("Chest x ray 2 views")
+        procedures = list(dict.fromkeys(procedures))
+        if request.documentation:
+            details = get_cpt_candidate_sets(
+                procedures,
+                request.documentation,
+                threshold=80,
+            )
+            cpt = [
+                {
+                    "Extracted Procedure": item["term"],
+                    "Matched Procedure/Service": item["selected_description"],
+                    "CPT/HCPCS Code": item["selected_code"],
+                }
+                for item in details
+                if item["status"] == "suggested"
+            ]
+        else:
+            cpt = get_cpt_codes(procedures, threshold=80)
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Code matching failed: {error}") from error
+
+    return CodingResponse(icd10=icd10, cpt=cpt)

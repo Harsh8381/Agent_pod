@@ -29,6 +29,17 @@ class KnowledgeBaseResponse(BaseModel):
     context: str
 
 
+class CodingRequest(BaseModel):
+    conditions: list[str] = Field(default_factory=list)
+    procedures: list[str] = Field(default_factory=list)
+    documentation: str = ""
+
+
+class CodingResponse(BaseModel):
+    icd10: list[dict[str, Any]] = Field(default_factory=list)
+    cpt: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class EncounterRequest(BaseModel):
     transcript: str = Field(..., min_length=1, description="Doctor-patient conversation transcript")
     include_cds: bool = True

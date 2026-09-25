@@ -23,13 +23,36 @@ __pycache__/
 .env.*
 *.local
 
+# Secrets and credentials
+*.key
+*.pem
+*.crt
+*.cer
+*.p12
+*.pfx
+*.pub
+*.token
+credentials.json
+credentials/
+secrets/
+api_keys.*
+
 # Generated app data
 uploads/
 logs/
 chroma_db/
 *.sqlite3
 
-# Sensitive or local runtime data
+# Audio, recordings, transcripts, and local runtime data
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+**/*transcript*
+**/*recording*
+**/*audio*
+**/*voice*
 **/clinical_records.json
 **/transcript.txt
 **/summary.txt

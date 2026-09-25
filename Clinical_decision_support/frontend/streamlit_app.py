@@ -19,13 +19,32 @@ except ModuleNotFoundError:
     from api_client import HealthcareApiClient
 
 try:
-    from frontend.code_matcher import classify_medical_item, get_medical_codes
+    from cpt_coder import (
+        classify_medical_item,
+        extract_performed_procedures,
+        get_cpt_codes,
+        get_cpt_candidate_sets,
+        is_explicitly_performed,
+    )
+    from icd10_coder import get_icd10_candidate_sets, get_icd10_codes
 except ModuleNotFoundError:
     try:
-        from code_matcher import classify_medical_item, get_medical_codes
+        from cpt_coder import (
+            classify_medical_item,
+            extract_performed_procedures,
+            get_cpt_codes,
+            get_cpt_candidate_sets,
+            is_explicitly_performed,
+        )
+        from icd10_coder import get_icd10_candidate_sets, get_icd10_codes
     except ModuleNotFoundError:
         classify_medical_item = None
-        get_medical_codes = None
+        extract_performed_procedures = None
+        get_cpt_candidate_sets = None
+        get_cpt_codes = None
+        get_icd10_candidate_sets = None
+        get_icd10_codes = None
+        is_explicitly_performed = None
 
 
 # ============================================================
@@ -41,6 +60,7 @@ st.set_page_config(
 
 DB_FILE = "clinical_records.json"
 ANALYSIS_VERSION = "2"
+CODE_MATCHER_VERSION = "3"
 
 
 # ============================================================
@@ -170,12 +190,12 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div { padding: .85rem 1rem !im
 .insight-category { margin:.55rem 0; }
 .insight-category-heading { margin-bottom:.28rem; color:var(--muted); font-size:.64rem; font-weight:800; text-transform:uppercase; }
 .insight-category-items { display:flex; flex-wrap:wrap; gap:.32rem; }
-.insight-chip { display:inline-flex; padding:.32rem .5rem; border:1px solid var(--border); border-radius:999px; }
+.insight-chip { display:inline-flex; padding:.32rem .5rem; border:1px solid var(--border); border-radius:999px; background:transparent; }
 .insight-chip b { font-size:.68rem; }
-.insight-diagnosis { background:var(--danger-soft); border-color:#fecaca; }
-.insight-symptom { background:var(--warning-soft); border-color:#fcd34d; }
-.insight-risk { background:#ffedd5; border-color:#fdba74; }
-.insight-procedure { background:var(--info-soft); border-color:#93c5fd; }
+.insight-diagnosis { background:transparent; border-color:#fecaca; }
+.insight-symptom { background:transparent; border-color:#fcd34d; }
+.insight-risk { background:transparent; border-color:#fdba74; }
+.insight-procedure { background:transparent; border-color:#93c5fd; }
 .clinical-graph-v2 { padding:1rem; background:var(--surface-soft); border:1px solid var(--border); border-radius:.65rem; }
 .graph-hierarchy-v2 { display:flex; flex-direction:column; align-items:center; gap:.6rem; }
 .graph-patient-card { max-width:80%; padding:.48rem .8rem; border-radius:.48rem; background:var(--primary); color:#fff; font-size:.73rem; font-weight:750; text-align:center; }
@@ -241,6 +261,8 @@ def initialize_state():
         "edit_summary": "",
         "code_results": {"icd10": [], "cpt": []},
         "code_record_id": None,
+        "code_results_signature": None,
+        "code_matcher_version": None,
         "code_generation_error": "",
     }
     for key, value in defaults.items():
@@ -272,15 +294,27 @@ def get_detected_insights(transcript_text):
         "a1c": "A1C Test", "hba1c": "A1C Test", "chest x-ray": "Chest X-ray",
         "chest x ray": "Chest X-ray", "ct scan": "CT Scan", "mri": "MRI",
         "ultrasound": "Ultrasound", "blood glucose": "Blood Glucose Test",
+        "physical therapy": "Physical Therapy", "physiotherapy": "Physical Therapy",
+        "injection": "Injection", "injections": "Injection",
     }
     return list(dict.fromkeys(value for keyword, value in keyword_map.items() if keyword in text))
 
 
-def get_code_suggestions(insights):
-    """Return ICD-10 and CPT/HCPCS matches while preserving useful diagnostics."""
+def get_record_insights(record):
+    transcript_insights = get_detected_insights(record.get("transcript", ""))
+    manual_insights = record.get("manual_insights", [])
+    return list(dict.fromkeys(
+        transcript_insights
+        + [item for item in manual_insights if item != "None"]
+        + ["Established Patient Office Visit"]
+    ))
+
+
+def get_code_suggestions(insights, documentation=None):
+    """Return separate ICD/CPT suggestions, using documentation context when supplied."""
     st.session_state.code_generation_error = ""
 
-    if classify_medical_item is None or get_medical_codes is None:
+    if classify_medical_item is None or get_icd10_codes is None or get_cpt_codes is None:
         st.session_state.code_generation_error = (
             "code_matcher.py could not be imported. Keep code_matcher.py either in the "
             "frontend package or in the same directory as this Streamlit file."
@@ -300,7 +334,7 @@ def get_code_suggestions(insights):
 
     procedure_terms = (
         "test", "x-ray", "x ray", "scan", "mri", "ultrasound",
-        "blood", "cbc", "a1c", "hba1c", "procedure"
+        "blood", "cbc", "a1c", "hba1c", "procedure", "office visit"
     )
 
     for item in candidates:
@@ -321,14 +355,35 @@ def get_code_suggestions(insights):
             icd_items.append(item)
 
     try:
-        icd_results = (
-            get_medical_codes(icd_items, threshold=80, code_type="icd10")
-            if icd_items else []
-        )
-        cpt_results = (
-            get_medical_codes(cpt_items, threshold=80, code_type="cpt")
-            if cpt_items else []
-        )
+        if documentation is not None and get_icd10_candidate_sets and get_cpt_candidate_sets:
+            evidence = {item: documentation for item in icd_items}
+            icd_details = get_icd10_candidate_sets(icd_items, threshold=80, evidence_by_term=evidence)
+            icd_results = [
+                {
+                    "Extracted Condition": item["term"],
+                    "Matched Disease/Injury": item["selected_description"],
+                    "ICD-10 Code": item["selected_code"],
+                }
+                for item in icd_details
+                if item["status"] == "suggested"
+            ]
+            performed_cpt_items = [
+                item for item in cpt_items
+                if is_explicitly_performed and is_explicitly_performed(item, documentation)
+            ]
+            cpt_details = get_cpt_candidate_sets(performed_cpt_items, documentation, threshold=80)
+            cpt_results = [
+                {
+                    "Extracted Procedure": item["term"],
+                    "Matched Procedure/Service": item["selected_description"],
+                    "CPT/HCPCS Code": item["selected_code"],
+                }
+                for item in cpt_details
+                if item["status"] == "suggested"
+            ]
+        else:
+            icd_results = get_icd10_codes(icd_items, threshold=80) if icd_items else []
+            cpt_results = get_cpt_codes(cpt_items, threshold=80) if cpt_items else []
     except Exception as error:
         st.session_state.code_generation_error = f"Code matching failed: {error}"
         return {"icd10": [], "cpt": []}
@@ -347,6 +402,32 @@ def get_code_suggestions(insights):
     return {"icd10": icd_results or [], "cpt": cpt_results or []}
 
 
+def get_backend_code_suggestions(insights, documentation=""):
+    """Use the backend coding contract, falling back to the local matcher offline."""
+    try:
+        procedures = []
+        conditions = []
+        procedure_terms = (
+            "test", "x-ray", "x ray", "scan", "mri", "ultrasound", "blood",
+            "cbc", "a1c", "hba1c", "procedure", "office visit", "therapy",
+            "injection", "surgery", "biopsy", "endoscopy", "evaluation",
+        )
+        for item in insights:
+            item_type = str(classify_medical_item(item) or "").lower()
+            if item_type in {"cpt", "hcpcs", "procedure"} or any(term in item.lower() for term in procedure_terms):
+                procedures.append(item)
+            else:
+                conditions.append(item)
+        documentation_lower = documentation.lower()
+        if "ct scan" in documentation_lower and "head" in documentation_lower:
+            procedures.append("CT scan of head without contrast")
+        if "chest x-ray" in documentation_lower and "two view" in documentation_lower:
+            procedures.append("Chest x ray 2 views")
+        return HealthcareApiClient().match_codes(conditions, procedures, documentation)
+    except (RuntimeError, requests.exceptions.HTTPError):
+        return get_code_suggestions(insights, documentation)
+
+
 
 # ============================================================
 # 4. REUSABLE COMPONENTS
@@ -362,7 +443,7 @@ def start_new_consultation():
 
 def open_record(record, destination="review"):
     st.session_state.current_record = record
-    st.session_state.detected_insights = get_detected_insights(record.get("transcript", ""))
+    st.session_state.detected_insights = get_record_insights(record)
     st.session_state.insight_count = 1
     go_to(destination)
 
@@ -623,12 +704,16 @@ def render_code_results(values, empty_message):
             st.markdown(f"- {escape(str(value))}")
 
 
-def render_transcript(record):
+def render_transcript(record, read_only=False):
     with st.expander("Transcript Audit Trail", expanded=False):
         doctor, patient = record.get("doctor", "Doctor"), record.get("name", "Patient")
         rows = record.get("transcript_data") or parse_transcript_entries(record.get("transcript", ""), doctor, patient)
         frame = pd.DataFrame(rows or [{"Speaker": doctor, "Text": "No transcript found."}])
-        st.markdown(f'<div class="audit-note">Editable clinical conversation · {len(frame)} entries</div>', unsafe_allow_html=True)
+        label = "Read-only clinical conversation" if read_only else "Editable clinical conversation"
+        st.markdown(f'<div class="audit-note">{label} · {len(frame)} entries</div>', unsafe_allow_html=True)
+        if read_only:
+            st.dataframe(frame, use_container_width=True, hide_index=True)
+            return frame
         return st.data_editor(frame, use_container_width=True, num_rows="dynamic", hide_index=True,
             column_config={"Speaker": st.column_config.SelectboxColumn("Speaker", options=[doctor, patient, "Unknown"], required=True), "Text": st.column_config.TextColumn("Spoken Text", width="large")})
 
@@ -738,16 +823,16 @@ def show_new_consultation():
             st.markdown('<div class="section-title">Summary and Key Highlights</div>', unsafe_allow_html=True)
             render_summary(result.get("soap_note") or result.get("patient_summary", "Not available"))
             for highlight in result.get("key_highlights", []): st.markdown(f"- {highlight}")
-            include_cds = st.radio("Generate Clinical Decision Support response?", [True, False], horizontal=True, format_func=lambda value: "Yes, generate CDS recommendations" if value else "No, documentation only")
+            st.info("Clinical Decision Support recommendations will be generated for every encounter.")
             if st.button("Generate Note", type="primary", use_container_width=True):
                 encounter = result
                 try:
-                    if include_cds: encounter = HealthcareApiClient().add_cds(encounter)
+                    encounter = HealthcareApiClient().add_cds(encounter)
                 except (RuntimeError, requests.exceptions.HTTPError) as error:
                     st.error(f"CDS generation failed: {error}"); return
                 transcript = encounter.get("transcript", "")
                 doctor, now = doctor_name.strip() or "Doctor", datetime.now()
-                record = {"id": f"PT-{str(uuid.uuid4().int)[:6]}", "name": patient_name.strip(), "age": patient_age.strip(), "gender": patient_gender, "doctor": doctor, "date": now.strftime("%d/%m/%Y"), "time": now.strftime("%H:%M"), "status": "Pending", "transcript": transcript, "transcript_data": parse_transcript_entries(transcript, doctor, patient_name.strip()), "summary": encounter.get("soap_note", ""), "patient_summary": encounter.get("patient_summary", ""), "key_highlights": encounter.get("key_highlights", []), "retrieved_guidelines": encounter.get("retrieved_guidelines", ""), "recommendations": encounter.get("recommendations", ""), "cds_requested": include_cds, "analysis_version": ANALYSIS_VERSION}
+                record = {"id": f"PT-{str(uuid.uuid4().int)[:6]}", "name": patient_name.strip(), "age": patient_age.strip(), "gender": patient_gender, "doctor": doctor, "date": now.strftime("%d/%m/%Y"), "time": now.strftime("%H:%M"), "status": "Pending", "transcript": transcript, "transcript_data": parse_transcript_entries(transcript, doctor, patient_name.strip()), "summary": encounter.get("soap_note", ""), "patient_summary": encounter.get("patient_summary", ""), "key_highlights": encounter.get("key_highlights", []), "retrieved_guidelines": encounter.get("retrieved_guidelines", ""), "recommendations": encounter.get("recommendations", ""), "cds_requested": True, "analysis_version": ANALYSIS_VERSION}
                 st.session_state.records.insert(0, record)
                 save_db(st.session_state.records)
                 open_record(record)
@@ -762,6 +847,7 @@ def show_review_note():
     record = st.session_state.current_record
     if not record:
         go_to("dashboard"); st.rerun(); return
+    is_approved = record.get("status") == "Approved"
     back, title, status = st.columns([1.15, 6.85, 2], vertical_alignment="center")
     if back.button("Back", key="review_back", use_container_width=True):
         go_to("dashboard"); st.rerun()
@@ -779,9 +865,9 @@ def show_review_note():
 
             soap_col, cds_col = st.columns(2)
             with soap_col:
-                if st.button("Regenerate SOAP", type="primary", use_container_width=True, disabled=not record.get("transcript", "").strip()):
+                if not is_approved and st.button("Generate SOAP", type="primary", use_container_width=True, disabled=not record.get("transcript", "").strip()):
                     try:
-                        with st.spinner("Regenerating SOAP note..."):
+                        with st.spinner("Generating SOAP note..."):
                             regenerated = HealthcareApiClient().regenerate_encounter(record["transcript"])
                         record["summary"] = regenerated.get("soap_note") or regenerated.get("patient_summary", "")
                         record["patient_summary"] = regenerated.get("patient_summary", "")
@@ -793,14 +879,14 @@ def show_review_note():
                                 break
                         save_db(st.session_state.records)
                         st.session_state.edit_summary = record["summary"]
-                        st.success("SOAP note regenerated from the stored transcript.")
+                        st.success("SOAP note generated from the stored transcript.")
                         st.rerun()
                     except (RuntimeError, requests.exceptions.HTTPError) as error:
                         st.error(f"SOAP regeneration failed: {error}")
             with cds_col:
-                if st.button("Regenerate CDS", type="secondary", use_container_width=True, disabled=not record.get("transcript", "").strip()):
+                if not is_approved and st.button("Generate CDS", type="secondary", use_container_width=True, disabled=not record.get("transcript", "").strip()):
                     try:
-                        with st.spinner("Regenerating CDS recommendations..."):
+                        with st.spinner("Generating CDS recommendations..."):
                             regenerated = HealthcareApiClient().regenerate_cds(record)
                         recommendations = regenerated.get("recommendations")
                         if not recommendations or not str(recommendations).strip():
@@ -814,22 +900,23 @@ def show_review_note():
                                 st.session_state.records[index] = record
                                 break
                         save_db(st.session_state.records)
-                        st.success("CDS recommendations regenerated.")
+                        st.success("CDS recommendations generated.")
                         st.rerun()
                     except (RuntimeError, requests.exceptions.HTTPError) as error:
                         st.error(f"CDS regeneration failed: {error}")
-        if record.get("cds_requested") and record.get("analysis_version") == ANALYSIS_VERSION:
-            with st.container(border=True):
-                st.markdown('<div class="section-title">Clinical Decision Support Recommendations</div><div class="section-subtitle">Evidence-based guidance for this encounter</div>', unsafe_allow_html=True)
-                render_cds_recommendations(record.get("recommendations") or "No CDS recommendations are available.")
+        with st.container(border=True):
+            st.markdown('<div class="section-title">Clinical Decision Support Recommendations</div><div class="section-subtitle">Evidence-based guidance for this encounter</div>', unsafe_allow_html=True)
+            render_cds_recommendations(record.get("recommendations") or "Review the documented encounter and follow up based on clinical judgment.")
         with st.container(border=True):
             st.markdown('<div class="section-title">Relationship Graph</div><div class="section-subtitle">Clinical relationships detected in this encounter</div>', unsafe_allow_html=True)
             render_clinical_graph(record.get("name", "Patient"), st.session_state.detected_insights)
     with right:
         with st.container(border=True):
-            st.markdown('<div class="section-title">SOAP Note</div><div class="section-subtitle">Editable encounter summary</div>', unsafe_allow_html=True)
+            subtitle = "Approved and locked" if is_approved else "Editable encounter summary"
+            st.markdown(f'<div class="section-title">SOAP Note</div><div class="section-subtitle">{subtitle}</div>', unsafe_allow_html=True)
             render_summary(st.session_state.edit_summary)
-            with st.expander("Review and edit summary", expanded=False): st.text_area("Edit clinical summary", key="edit_summary", height=220, label_visibility="collapsed")
+            if not is_approved:
+                with st.expander("Review and edit summary", expanded=False): st.text_area("Edit clinical summary", key="edit_summary", height=220, label_visibility="collapsed")
         with st.container(border=True):
             st.markdown('<div class="section-title">Detected Insights</div><div class="section-subtitle">Grouped clinical signals</div>', unsafe_allow_html=True)
             insights = st.session_state.detected_insights
@@ -840,19 +927,32 @@ def show_review_note():
             st.caption("ICD-10 and CPT/HCPCS suggestions are available on the Codes page.")
             if st.button("Open Codes", key="review_open_codes", use_container_width=True):
                 go_to("codes"); st.rerun()
-        with st.container(border=True):
-            st.markdown('<div class="insight-heading">Add Clinical Insight</div>', unsafe_allow_html=True)
-            for index in range(st.session_state.insight_count): st.selectbox(f"Insight {index + 1}", MASTER_INSIGHTS, key=f"insight_{index}", label_visibility="collapsed")
-            add_col, push_col = st.columns(2)
-            if add_col.button("Add Insight", use_container_width=True, disabled=st.session_state.insight_count >= 6):
-                st.session_state.insight_count += 1; st.rerun()
-            def push_selected_insights_to_note():
-                selected = [st.session_state.get(f"insight_{i}", "") for i in range(st.session_state.insight_count)]
-                st.session_state.edit_summary = append_selected_insights_to_note(st.session_state.edit_summary, selected)
-                st.session_state.insight_count = 1
-            push_col.button("Push to Note", type="primary", use_container_width=True, on_click=push_selected_insights_to_note)
-    edited_df = render_transcript(record)
+        if not is_approved:
+            with st.container(border=True):
+                st.markdown('<div class="insight-heading">Add Clinical Insight</div>', unsafe_allow_html=True)
+                for index in range(st.session_state.insight_count): st.selectbox(f"Insight {index + 1}", MASTER_INSIGHTS, key=f"insight_{index}", label_visibility="collapsed")
+                add_col, push_col = st.columns(2)
+                if add_col.button("Add Insight", use_container_width=True, disabled=st.session_state.insight_count >= 6):
+                    st.session_state.insight_count += 1; st.rerun()
+                def push_selected_insights_to_note():
+                    selected = [st.session_state.get(f"insight_{i}", "") for i in range(st.session_state.insight_count)]
+                    manual_insights = record.setdefault("manual_insights", [])
+                    for insight in selected:
+                        if insight != "None" and insight not in manual_insights:
+                            manual_insights.append(insight)
+                    st.session_state.edit_summary = append_selected_insights_to_note(st.session_state.edit_summary, selected)
+                    st.session_state.detected_insights = get_record_insights(record)
+                    for index, existing in enumerate(st.session_state.records):
+                        if existing.get("id") == record.get("id"):
+                            st.session_state.records[index] = record
+                            break
+                    save_db(st.session_state.records)
+                    st.session_state.insight_count = 1
+                push_col.button("Push to Note", type="primary", use_container_width=True, on_click=push_selected_insights_to_note)
+    edited_df = render_transcript(record, read_only=is_approved)
     def persist(approved=False):
+        if record.get("status") == "Approved":
+            return
         record["summary"] = st.session_state.edit_summary
         record["transcript_data"] = edited_df.to_dict("records")
         if approved:
@@ -862,12 +962,11 @@ def show_review_note():
             if existing.get("id") == record.get("id"):
                 st.session_state.records[index] = record; break
         save_db(st.session_state.records)
-    st.divider()
-    _, draft_col, final_col = st.columns([7, 1.5, 1.5], vertical_alignment="center")
     if record.get("status") == "Pending":
+        st.divider()
+        _, draft_col, final_col = st.columns([7, 1.5, 1.5], vertical_alignment="center")
         if draft_col.button("Save Draft", use_container_width=True): persist(False); st.success("Draft and audit trail updated.")
         if final_col.button("Finalize Note", type="primary", use_container_width=True): persist(True); go_to("dashboard"); st.rerun()
-    elif final_col.button("Update Record", type="primary", use_container_width=True): persist(False); st.success("Record updated.")
 
 
 # ============================================================
@@ -891,9 +990,9 @@ def show_codes():
 
     if not current or current.get("id") != record.get("id"):
         st.session_state.current_record = record
-        st.session_state.detected_insights = get_detected_insights(record.get("transcript", ""))
+        st.session_state.detected_insights = get_record_insights(record)
 
-    insights = get_detected_insights(record.get("transcript", ""))
+    insights = get_record_insights(record)
     st.session_state.detected_insights = insights
 
     st.markdown(
@@ -912,17 +1011,28 @@ def show_codes():
             st.warning("No codable insights were detected in this encounter transcript.")
 
         generate_col, review_col = st.columns([1, 1])
-        if generate_col.button("Generate Code Suggestions", type="primary", use_container_width=True, disabled=not insights):
+        if generate_col.button("Regenerate Code Suggestions", type="primary", use_container_width=True, disabled=not insights):
             with st.spinner("Matching ICD-10 and CPT/HCPCS codes..."):
-                st.session_state.code_results = get_code_suggestions(insights)
+                st.session_state.code_results = get_backend_code_suggestions(insights, record.get("transcript", ""))
                 st.session_state.code_record_id = record.get("id")
+                st.session_state.code_results_signature = tuple(insights)
+                st.session_state.code_matcher_version = CODE_MATCHER_VERSION
             st.rerun()
         if review_col.button("Return to Clinical Review", use_container_width=True):
             go_to("review"); st.rerun()
 
-    if st.session_state.code_record_id != record.get("id"):
-        st.session_state.code_results = {"icd10": [], "cpt": []}
-        st.session_state.code_generation_error = ""
+    current_signature = tuple(insights)
+    cached_results_are_stale = (
+        st.session_state.code_record_id != record.get("id")
+        or st.session_state.code_results_signature != current_signature
+        or st.session_state.code_matcher_version != CODE_MATCHER_VERSION
+    )
+    if cached_results_are_stale:
+        with st.spinner("Matching ICD-10 and CPT/HCPCS codes..."):
+            st.session_state.code_results = get_backend_code_suggestions(insights, record.get("transcript", ""))
+        st.session_state.code_record_id = record.get("id")
+        st.session_state.code_results_signature = current_signature
+        st.session_state.code_matcher_version = CODE_MATCHER_VERSION
 
     code_results = st.session_state.code_results
     code_error = st.session_state.get("code_generation_error", "")

@@ -25,7 +25,7 @@
   },
   {
     "code": "70450",
-    "description": "Ct head/brain w/o dye"
+    "description": "Ct scan of head without contrast"
   },
   {
     "code": "70460",
@@ -37,11 +37,15 @@
   },
   {
     "code": "71046",
-    "description": "X-ray exam chest 2 views"
+    "description": "two views chest x-ray"
   },
   {
     "code": "97110",
     "description": "Therapeutic exercises"
+  },
+  {
+    "code": "83036",
+    "description": "Hemoglobin A1c"
   },
   {
     "code": "99213",

@@ -16,6 +16,9 @@ KNOWLEDGE_BASE_DIR = PROJECT_ROOT / "knowledge_base"
 COFORGE_API_URL = os.getenv("COFORGE_API_URL")
 COFORGE_API_KEY = os.getenv("COFORGE_API_KEY")
 COFORGE_MODEL = os.getenv("COFORGE_MODEL", "").strip()
+COFORGE_CPT_API_URL = os.getenv("COFORGE_CPT_API_URL") or COFORGE_API_URL
+COFORGE_CPT_API_KEY = os.getenv("COFORGE_CPT_API_KEY") or COFORGE_API_KEY
+COFORGE_CPT_MODEL = os.getenv("COFORGE_CPT_MODEL", "").strip() or COFORGE_MODEL
 EMBEDDING_MODEL = os.getenv(
 	"EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
 ).strip()

@@ -2,50 +2,50 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from app.core.config import COFORGE_API_KEY, COFORGE_API_URL, COFORGE_MODEL
+from app.core.config import (
+    COFORGE_API_KEY,
+    COFORGE_API_URL,
+    COFORGE_CPT_API_KEY,
+    COFORGE_CPT_API_URL,
+    COFORGE_CPT_MODEL,
+    COFORGE_MODEL,
+)
 
 
-def call_llm(prompt, system_prompt=None, temperature=0.3):
-    """
-    Call Coforge LLM Router API.
-    """
+def _call_llm_with_config(prompt, system_prompt=None, temperature=0.3, api_key=None, api_url=None, model=None, key_name="COFORGE_API_KEY"):
+    """Call the Coforge LLM Router API using the supplied settings."""
 
-    if not COFORGE_API_KEY:
-        raise ValueError("COFORGE_API_KEY not found in .env file.")
+    clean_api_key = (api_key or "").strip()
+    clean_api_url = (api_url or "").strip().replace('"', '').replace("%22", "")
+    clean_model = (model or "").strip()
 
-    if not COFORGE_API_URL:
-        raise ValueError("COFORGE_API_URL not found in .env file.")
+    if not clean_api_key:
+        raise ValueError(f"{key_name} not found in .env file.")
 
-    if not COFORGE_MODEL:
+    if not clean_api_url:
+        raise ValueError(f"{key_name.replace('_API_KEY', '_API_URL')} not found in .env file.")
+
+    if not clean_model:
         raise ValueError(
-            "COFORGE_MODEL is empty. Set it in .env to the exact model name enabled for your Coforge AI Studio account."
+            f"{key_name.replace('_API_KEY', '_MODEL')} is empty. Set it in .env to the exact model name enabled for your Coforge AI Studio account."
         )
-
-    clean_api_url = COFORGE_API_URL.strip().replace('"', '').replace("%22", "")
-    clean_api_key = COFORGE_API_KEY.strip()
 
     headers = {
         "Content-Type": "application/json",
-        "X-API-KEY": clean_api_key
+        "X-API-KEY": clean_api_key,
     }
 
     messages = []
 
     if system_prompt:
-        messages.append({
-            "role": "system",
-            "content": system_prompt
-        })
+        messages.append({"role": "system", "content": system_prompt})
 
-    messages.append({
-        "role": "user",
-        "content": prompt
-    })
+    messages.append({"role": "user", "content": prompt})
 
     body = {
-        "model": COFORGE_MODEL,
+        "model": clean_model,
         "messages": messages,
-        "temperature": temperature
+        "temperature": temperature,
     }
 
     retry_policy = Retry(
@@ -80,5 +80,30 @@ def call_llm(prompt, system_prompt=None, temperature=0.3):
         )
 
     data = response.json()
-
     return data["choices"][0]["message"]["content"]
+
+
+def call_llm(prompt, system_prompt=None, temperature=0.3):
+    """Call the standard Coforge LLM Router API."""
+    return _call_llm_with_config(
+        prompt,
+        system_prompt=system_prompt,
+        temperature=temperature,
+        api_key=COFORGE_API_KEY,
+        api_url=COFORGE_API_URL,
+        model=COFORGE_MODEL,
+        key_name="COFORGE_API_KEY",
+    )
+
+
+def call_llm_for_cpt(prompt, system_prompt=None, temperature=0.3):
+    """Call the dedicated CPT generation LLM configuration if provided."""
+    return _call_llm_with_config(
+        prompt,
+        system_prompt=system_prompt,
+        temperature=temperature,
+        api_key=COFORGE_CPT_API_KEY,
+        api_url=COFORGE_CPT_API_URL,
+        model=COFORGE_CPT_MODEL,
+        key_name="COFORGE_CPT_API_KEY",
+    )
