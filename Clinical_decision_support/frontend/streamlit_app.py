@@ -19,8 +19,14 @@ except ModuleNotFoundError:
     from api_client import HealthcareApiClient
 
 try:
+    from frontend.chargemaster import build_cpt_bill_rows
+except ModuleNotFoundError:
+    from chargemaster import build_cpt_bill_rows
+
+try:
     from cpt_coder import (
         classify_medical_item,
+        classify_procedure_status,
         extract_performed_procedures,
         get_cpt_codes,
         get_cpt_candidate_sets,
@@ -31,6 +37,7 @@ except ModuleNotFoundError:
     try:
         from cpt_coder import (
             classify_medical_item,
+            classify_procedure_status,
             extract_performed_procedures,
             get_cpt_codes,
             get_cpt_candidate_sets,
@@ -39,6 +46,7 @@ except ModuleNotFoundError:
         from icd10_coder import get_icd10_candidate_sets, get_icd10_codes
     except ModuleNotFoundError:
         classify_medical_item = None
+        classify_procedure_status = None
         extract_performed_procedures = None
         get_cpt_candidate_sets = None
         get_cpt_codes = None
@@ -426,6 +434,53 @@ def get_backend_code_suggestions(insights, documentation=""):
         return HealthcareApiClient().match_codes(conditions, procedures, documentation)
     except (RuntimeError, requests.exceptions.HTTPError):
         return get_code_suggestions(insights, documentation)
+
+
+def filter_billing_eligible_cpt_results(cpt_results, documentation):
+    """Keep only API/local CPT candidates explicitly performed in this encounter."""
+    billing_eligible_cpt_results = []
+    excluded_nonperformed_count = 0
+    unverifiable_count = 0
+
+    for candidate in cpt_results or []:
+        if not isinstance(candidate, dict):
+            unverifiable_count += 1
+            continue
+
+        source_procedure = candidate.get("Extracted Procedure")
+        if not isinstance(source_procedure, str) or not source_procedure.strip():
+            unverifiable_count += 1
+            continue
+
+        status = (
+            classify_procedure_status(source_procedure, documentation)
+            if classify_procedure_status
+            else "unknown"
+        )
+        if status == "unknown":
+            unverifiable_count += 1
+        elif is_explicitly_performed and is_explicitly_performed(source_procedure, documentation):
+            billing_eligible_cpt_results.append(candidate)
+        else:
+            excluded_nonperformed_count += 1
+
+    return (
+        billing_eligible_cpt_results,
+        excluded_nonperformed_count,
+        unverifiable_count,
+    )
+
+
+def prepare_billing_lines(cpt_results, documentation, encounter_date=None):
+    billing_eligible_cpt_results, excluded_count, unverifiable_count = (
+        filter_billing_eligible_cpt_results(cpt_results, documentation)
+    )
+    billing_rows = (
+        build_cpt_bill_rows(billing_eligible_cpt_results, encounter_date)
+        if billing_eligible_cpt_results
+        else []
+    )
+    return billing_eligible_cpt_results, excluded_count, unverifiable_count, billing_rows
 
 
 
@@ -1051,6 +1106,45 @@ def show_codes():
         with st.container(border=True):
             st.markdown('<div class="section-title">Suggested CPT/HCPCS Codes</div><div class="section-subtitle">Procedure and service code candidates based on detected tests and procedures</div>', unsafe_allow_html=True)
             render_code_results(code_results.get("cpt", []), "No CPT/HCPCS suggestions are available. Generate codes or verify that code_matcher is configured.")
+
+        (
+            billing_eligible_cpt_results,
+            excluded_count,
+            unverifiable_count,
+            billing_rows,
+        ) = prepare_billing_lines(
+            code_results.get("cpt", []),
+            record.get("transcript", ""),
+            record.get("date"),
+        )
+        st.markdown("### Estimated CPT/HCPCS Billing Lines")
+        st.caption(
+            "These amounts are chargemaster-based estimates only and are not finalized claims, "
+            "payer-allowed amounts, or patient responsibility amounts."
+        )
+        count_columns = st.columns(3)
+        count_columns[0].metric("Billing-eligible CPT candidates", len(billing_eligible_cpt_results))
+        count_columns[1].metric("Excluded non-performed candidates", excluded_count)
+        count_columns[2].metric("Unverifiable performed status", unverifiable_count)
+
+        if unverifiable_count:
+            st.warning(
+                f"{unverifiable_count} CPT candidate(s) were excluded because performed status could not be verified."
+            )
+
+        if billing_rows:
+            unavailable_statuses = {
+                "Chargemaster unavailable",
+                "Unsupported format",
+                "Missing required columns",
+            }
+            if any(row["Rate Source Status"] in unavailable_statuses for row in billing_rows):
+                st.warning(
+                    "Chargemaster is unavailable or invalid; coding suggestions remain available."
+                )
+            st.dataframe(pd.DataFrame(billing_rows), hide_index=True, width="stretch")
+        else:
+            st.info("No billing-eligible CPT candidates are available for chargemaster lookup.")
 
     st.caption("Coding suggestions require professional validation before billing, claim submission, or addition to the legal health record.")
 
