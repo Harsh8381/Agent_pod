@@ -84,6 +84,163 @@ _cpt_dataframe = None
 
 PROCEDURE_KEYWORDS = ("x ray", "x-ray", "scan", "surgery", "biopsy", "therapy", "injection", "procedure", "endoscopy", "ultrasound", "mri", "ct", "cbc", "a1c", "hba1c", "blood test", "office visit")
 
+_PROCEDURE_STATUS_CUES = re.compile(
+    r"\b(?:performed|completed|done|obtained|administered|collected|underwent|"
+    r"ordered|order|requested|planned|plan|recommend(?:ed)?|consider(?:ed)?|"
+    r"discuss(?:ed|ion)?|pending|declined|cancelled|canceled|history|historical|"
+    r"previous|prior|previously|remote|not|never|without|no|possible|may|"
+    r"needed|rule\s+out|results?|demonstrate|show|reveal|indicate)\b",
+    re.IGNORECASE,
+)
+_NONPERFORMED_STATUS_PRIORITY = (
+    "ordered_not_performed",
+    "negated",
+    "historical",
+    "planned",
+    "recommended",
+    "discussed",
+    "unknown",
+)
+
+
+def _canonicalize_procedure_text(value: Any) -> str:
+    text = str(value or "").lower()
+    text = re.sub(r"\b(?:c\s*\.?\s*x\s*\.?\s*r\.?)\b", "chest x ray", text)
+    text = re.sub(r"\bchest\s+(?:x\s*[- ]?\s*ray|radiographs?)\b", "chest x ray", text)
+    return text
+
+
+def _procedure_aliases(term: Any) -> tuple[str, ...]:
+    normalized = normalize_text(_canonicalize_procedure_text(term))
+    aliases = {normalized} if normalized else set()
+    if normalized in {"chest x ray", "cxr", "chest radiograph", "chest radiographs"} or (
+        "chest" in normalized and ("x ray" in normalized or "radiograph" in normalized)
+    ):
+        aliases.update({"chest x ray"})
+    if normalized in {"cbc", "complete blood count"}:
+        aliases.update({"cbc", "complete blood count"})
+    if normalized in {"a1c", "a1c test", "hba1c", "hba1c test", "hemoglobin a1c"}:
+        aliases.update({"a1c", "a1c test", "hba1c", "hba1c test", "hemoglobin a1c"})
+    if normalized in {"office visit", "established patient office visit"}:
+        aliases.update({"office visit", "patient evaluated", "patient was evaluated"})
+    return tuple(sorted(aliases, key=len, reverse=True))
+
+
+def _contains_procedure_term(clause: str, aliases: tuple[str, ...]) -> bool:
+    normalized_clause = normalize_text(_canonicalize_procedure_text(clause))
+    return any(
+        re.search(rf"\b{re.escape(alias)}\b", normalized_clause)
+        for alias in aliases
+    )
+
+
+def _contains_any_procedure(clause: str) -> bool:
+    normalized_clause = normalize_text(_canonicalize_procedure_text(clause))
+    known_terms = {
+        *PROCEDURE_KEYWORDS,
+        *COMMON_CPT_FALLBACKS,
+        *ADDITIONAL_CPT_FALLBACKS,
+        *DOCUMENTATION_PROCEDURE_ALIASES,
+        "chest radiograph",
+        "chest radiographs",
+        "cxr",
+    }
+    return any(
+        re.search(rf"\b{re.escape(normalize_text(term))}\b", normalized_clause)
+        for term in known_terms
+        if normalize_text(term)
+    )
+
+
+def _split_procedure_context(text: str) -> list[str]:
+    clauses = []
+    for sentence in re.split(r"(?<=[.!?])\s+|[;\n]+", text):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+
+        parts = []
+        start = 0
+        separators = re.finditer(r",|\b(?:but|however|whereas|while|and|or)\b", sentence, re.IGNORECASE)
+        for separator in separators:
+            left = sentence[start:separator.start()]
+            right = sentence[separator.end():]
+            if (
+                _contains_any_procedure(left)
+                and _contains_any_procedure(right)
+                and _PROCEDURE_STATUS_CUES.search(left)
+                and _PROCEDURE_STATUS_CUES.search(right)
+            ):
+                parts.append(left)
+                start = separator.end()
+        parts.append(sentence[start:])
+        clauses.extend(part.strip() for part in parts if part.strip())
+    return clauses
+
+
+def _classify_procedure_clause(clause: str) -> str:
+    text = normalize_text(_canonicalize_procedure_text(clause))
+
+    if re.search(r"\b(?:declined|cancelled|canceled|pending|scheduled)\b", text):
+        return "ordered_not_performed"
+    if re.search(
+        r"\b(?:no|not|never|without)\b.{0,45}\b(?:performed|completed|done|obtained|carried out)\b"
+        r"|\b(?:not|never)\s+(?:been\s+)?(?:performed|completed|done|obtained|carried out)\b"
+        r"|\b(?:no|without)\b.{0,35}\b(?:chest x ray|cbc|complete blood count|a1c|hba1c|"
+        r"ct scan|mri|ultrasound|blood test|office visit)\b",
+        text,
+    ):
+        return "ordered_not_performed" if re.search(r"\b(?:ordered|requested)\b", text) else "negated"
+    if re.search(
+        r"\b(?:history|historical|previous|prior|previously|remote|last year|years ago|in the past)\b",
+        text,
+    ):
+        return "historical"
+    if re.search(r"\b(?:recommend|recommended|recommendation)\b", text):
+        return "recommended"
+    if re.search(r"\b(?:discuss|discussed|discussion)\b", text):
+        return "discussed"
+    if re.search(
+        r"\b(?:plan|planned|planning|possible|possibly|may be needed|might need|rule out|consider|considered)\b",
+        text,
+    ):
+        return "planned"
+
+    performed_action = re.search(
+        r"\b(?:performed|completed|done|obtained|administered|collected|underwent)\b",
+        text,
+    )
+    result_evidence = re.search(
+        r"\bresults?\b.{0,45}\b(?:demonstrate|demonstrates|demonstrated|show|shows|showed|"
+        r"reveal|reveals|revealed|indicate|indicates|indicated|read|interpreted|reported)\b",
+        text,
+    )
+    encounter_evaluation = re.search(r"\bpatient (?:was )?evaluated\b", text)
+    if performed_action or result_evidence or encounter_evaluation:
+        return "performed"
+    if re.search(r"\b(?:ordered|requested)\b", text):
+        return "ordered_not_performed"
+    return "unknown"
+
+
+def classify_procedure_status(term: Any, evidence: str = "") -> str:
+    """Conservatively classify a procedure mention using its local text context."""
+    aliases = _procedure_aliases(term)
+    if not aliases or not str(evidence or "").strip():
+        return "unknown"
+
+    statuses = [
+        _classify_procedure_clause(clause)
+        for clause in _split_procedure_context(_canonicalize_procedure_text(evidence))
+        if _contains_procedure_term(clause, aliases)
+    ]
+    if "performed" in statuses:
+        return "performed"
+    return next(
+        (status for status in _NONPERFORMED_STATUS_PRIORITY if status in statuses),
+        "unknown",
+    )
+
 
 def classify_medical_item(item: Any) -> str | None:
     normalized = normalize_text(item)
@@ -91,24 +248,11 @@ def classify_medical_item(item: Any) -> str | None:
 
 
 def is_explicitly_performed(term: Any, evidence: str = "") -> bool:
-    normalized_term = normalize_text(term)
-    normalized_evidence = normalize_text(evidence)
-    if not normalized_evidence:
-        return False
-    if normalized_term in {"office visit", "established patient office visit"}:
-        return True
-    if normalized_term in {"cbc", "complete blood count", "a1c", "a1c test", "hba1c", "hba1c test", "chest x ray", "ct scan", "ultrasound", "mri", "blood glucose test"}:
-        return bool(re.search(
-            rf"\b(?:performed|completed|done|obtained|administered|collected|read|interpreted|reported|documented)\b[^.\n]*\b{re.escape(normalized_term)}\b",
-            normalized_evidence,
-        )) or bool(re.search(rf"\b{re.escape(normalized_term)}\b", normalized_evidence))
-    return bool(re.search(
-        rf"\b(?:performed|completed|done|obtained|administered|collected|read|interpreted|reported|documented)\b[^.\n]*\b{re.escape(normalized_term)}\b",
-        normalized_evidence,
-    ))
+    return classify_procedure_status(term, evidence) == "performed"
 
 
 def extract_performed_procedures(documentation: str) -> list[str]:
+    """Return procedure keywords whose local documentation context says performed."""
     return [term for term in PROCEDURE_KEYWORDS if is_explicitly_performed(term, documentation)]
 
 
@@ -162,7 +306,7 @@ def normalize_detected_procedures(detected_procedures: Any) -> list[str]:
 
 
 def infer_documented_procedures(documentation: str) -> list[str]:
-    """Infer known billable services from documentation without treating drugs as CPT."""
+    """Infer candidate services from documentation; this does not validate performance."""
     normalized_documentation = normalize_text(documentation)
     inferred = []
     for phrase, procedure in sorted(DOCUMENTATION_PROCEDURE_ALIASES.items(), key=lambda item: len(item[0]), reverse=True):
