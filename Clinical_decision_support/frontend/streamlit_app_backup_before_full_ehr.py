@@ -20,16 +20,6 @@ import speech_recognition as sr
 import streamlit as st
 
 try:
-    from frontend.ipd_billing import show_ipd_billing
-except ModuleNotFoundError:
-    from ipd_billing import show_ipd_billing
-
-try:
-    from frontend.admin_console import show_admin_dashboard, show_super_admin
-except ModuleNotFoundError:
-    from admin_console import show_admin_dashboard, show_super_admin
-
-try:
     from frontend.api_client import HealthcareApiClient
 except ModuleNotFoundError:
     from api_client import HealthcareApiClient
@@ -46,7 +36,6 @@ try:
         extract_performed_procedures,
         get_cpt_codes,
         get_cpt_candidate_sets,
-        infer_documented_procedures,
         is_explicitly_performed,
     )
     from icd10_coder import get_icd10_candidate_sets, get_icd10_codes
@@ -58,7 +47,6 @@ except ModuleNotFoundError:
             extract_performed_procedures,
             get_cpt_codes,
             get_cpt_candidate_sets,
-            infer_documented_procedures,
             is_explicitly_performed,
         )
         from icd10_coder import get_icd10_candidate_sets, get_icd10_codes
@@ -68,7 +56,6 @@ except ModuleNotFoundError:
         extract_performed_procedures = None
         get_cpt_candidate_sets = None
         get_cpt_codes = None
-        infer_documented_procedures = None
         get_icd10_candidate_sets = None
         get_icd10_codes = None
         is_explicitly_performed = None
@@ -87,13 +74,8 @@ st.set_page_config(
 
 DB_FILE = PROJECT_ROOT / "clinical_records.json"
 EHR_DATA_FILE = PROJECT_ROOT / "Epic_Inspired_USA_50_Patient_Demo.xlsx"
-EHR_JSON_FILE = PROJECT_ROOT / "Epic_Inspired_USA_50_Patient_Demo.json"
-BILLING_NOTICE = (
-    "This draft contains gross chargemaster-based demo charges only. It is not a finalized claim, "
-    "payer-allowed amount, or patient responsibility amount. Professional coding and billing validation is required."
-)
 ANALYSIS_VERSION = "2"
-CODE_MATCHER_VERSION = "4"
+CODE_MATCHER_VERSION = "3"
 
 
 # ============================================================
@@ -126,10 +108,6 @@ if theme_name == "Dark":
         --sidebar-muted: #94a3b8;
         --sidebar-border: #334155;
         --sidebar-hover: #1e293b;
-        --mint-bg: #123b38;
-        --mint-border: #1d625b;
-        --mint-title: #a7f3d0;
-        --mint-text: #c4e8df;
     """
     header_background = "rgba(15, 23, 42, 0.96)"
 else:
@@ -157,10 +135,6 @@ else:
         --sidebar-muted: #94a3b8;
         --sidebar-border: #1f2937;
         --sidebar-hover: #164e63;
-        --mint-bg: #e7f7f1;
-        --mint-border: #a8d9c9;
-        --mint-title: #115e59;
-        --mint-text: #47706d;
     """
     header_background = "rgba(244, 247, 249, .96)"
 
@@ -186,45 +160,43 @@ header[data-testid="stHeader"] {{
 button[data-testid="stSidebarCollapsedControl"],
 [data-testid="stSidebarCollapseButton"] button {{ z-index: 1100; }}
 [data-testid="stAppViewContainer"] > .main {{ padding-top: 0; }}
-.block-container {{ max-width: 1500px; padding: 3.7rem 1.25rem 1rem !important; }}
-[data-testid="stVerticalBlock"] {{ gap: .45rem; }}
-[data-testid="stHorizontalBlock"] {{ gap: .6rem; }}
+.block-container {{ max-width: 1600px; padding: 4.25rem 1.5rem 1.25rem !important; }}
+[data-testid="stVerticalBlock"] {{ gap: .7rem; }}
+[data-testid="stHorizontalBlock"] {{ gap: .75rem; }}
 [data-testid="stElementContainer"] {{ margin-bottom: 0; }}
-hr {{ margin: .2rem 0 .45rem !important; border-color: var(--border) !important; }}
+hr {{ margin: .25rem 0 .65rem !important; border-color: var(--border) !important; }}
 
 /* Sidebar */
-[data-testid="stSidebar"] {{ background: var(--surface); border-right: 1px solid var(--border); }}
-[data-testid="stSidebar"] > div:first-child {{ padding-top: .45rem; }}
-[data-testid="stSidebar"] * {{ color: var(--text) !important; }}
-[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{ gap: .16rem; }}
+[data-testid="stSidebar"] {{ background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-border); }}
+[data-testid="stSidebar"] > div:first-child {{ padding-top: .75rem; }}
+[data-testid="stSidebar"] * {{ color: var(--sidebar-text) !important; }}
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{ gap: .3rem; }}
 [data-testid="stSidebar"] .stButton > button {{
-    min-height: 2.25rem; justify-content: flex-start; padding-top: .32rem; padding-bottom: .32rem; background: transparent !important;
+    min-height: 2.45rem; justify-content: flex-start; background: transparent !important;
     border: 1px solid transparent !important; box-shadow: none !important;
 }}
-[data-testid="stSidebar"] [data-testid="stExpander"] details summary {{ min-height: 2.15rem; padding-top: .3rem; padding-bottom: .3rem; }}
-[data-testid="stSidebar"] [data-testid="stExpander"] details > div {{ padding: .2rem .35rem .35rem !important; }}
 [data-testid="stSidebar"] .stButton > button:hover {{
     background: var(--sidebar-hover) !important; border-color: var(--primary) !important;
 }}
-.shell-logo {{ margin: .1rem 0 0; font-size: 1.45rem; font-weight: 800; color: var(--text) !important; }}
+.shell-logo {{ margin: .15rem 0 0; font-size: 1.55rem; font-weight: 800; color: var(--sidebar-text) !important; }}
 .shell-logo span {{ color: #5eead4 !important; }}
-.shell-subtitle {{ margin: .08rem 0 .8rem; color: var(--muted) !important; font-size: .72rem; }}
-.shell-section-label {{ margin: .45rem 0 .18rem; color: var(--muted) !important; font-size: .62rem; font-weight: 800; letter-spacing: .1rem; }}
-.shell-divider {{ height: 1px; margin: .45rem 0; background: var(--border); }}
-.shell-user {{ display: flex; align-items: center; gap: .55rem; margin-top: .7rem; padding: .55rem; border-top: 1px solid var(--border); }}
+.shell-subtitle {{ margin: .1rem 0 1.2rem; color: var(--sidebar-muted) !important; font-size: .75rem; }}
+.shell-section-label {{ margin: .65rem 0 .25rem; color: var(--sidebar-muted) !important; font-size: .64rem; font-weight: 800; letter-spacing: .11rem; }}
+.shell-divider {{ height: 1px; margin: .65rem 0; background: var(--sidebar-border); }}
+.shell-user {{ display: flex; align-items: center; gap: .65rem; margin-top: 1rem; padding: .7rem; border-top: 1px solid var(--sidebar-border); }}
 .shell-user b, .shell-user small {{ display: block; }}
-.shell-user small {{ color: var(--muted) !important; font-size: .67rem; }}
+.shell-user small {{ color: var(--sidebar-muted) !important; font-size: .67rem; }}
 .user-avatar {{ display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; background: #0f766e; color: #fff !important; font-size: .7rem; font-weight: 800; }}
 .nav-active-marker {{ height: 2px; margin: -.36rem .65rem .15rem; border-radius: 2px; background: var(--primary); }}
 
 /* Shared */
-.page-heading {{ margin: 0; font-size: 1.5rem; line-height: 1.12; font-weight: 780; color: var(--text); }}
+.page-heading {{ margin: 0; font-size: 1.65rem; line-height: 1.18; font-weight: 780; color: var(--text); }}
 .page-kicker {{ margin: .2rem 0 0; font-size: .78rem; color: var(--muted); }}
 .section-title {{ margin: 0; font-size: 1rem; line-height: 1.25; font-weight: 750; color: var(--text); }}
 .section-subtitle {{ margin: .12rem 0 .55rem; font-size: .72rem; color: var(--muted); }}
 .toolbar-label, .insight-heading {{ margin: .55rem 0 .2rem; color: var(--muted); font-size: .65rem; font-weight: 800; letter-spacing: .08rem; text-transform: uppercase; }}
 .section-gap {{ height: .45rem; }}
-.stButton > button {{ min-height: 2.25rem; border-radius: .42rem; font-weight: 650; }}
+.stButton > button {{ min-height: 2.4rem; border-radius: .48rem; font-weight: 650; }}
 [data-testid="stMain"] .stButton > button,
 [data-testid="stAppViewContainer"] .main .stButton > button {{
     background: var(--primary) !important; border: 1px solid var(--primary) !important;
@@ -237,8 +209,8 @@ hr {{ margin: .2rem 0 .45rem !important; border-color: var(--border) !important;
 [data-testid="stMain"] .stButton > button:disabled {{ background: #94bdb8 !important; border-color: #94bdb8 !important; opacity: .72 !important; }}
 .stTextInput, .stSelectbox, .stDateInput, .stTextArea, .stRadio {{ margin-bottom: 0 !important; }}
 [data-baseweb="input"], [data-baseweb="select"] > div, textarea {{ border-radius: .45rem !important; }}
-div[data-testid="stVerticalBlockBorderWrapper"] {{ background: var(--surface); border-color: var(--border) !important; border-radius: .6rem !important; box-shadow: 0 1px 3px rgba(15,23,42,.05); }}
-div[data-testid="stVerticalBlockBorderWrapper"] > div {{ padding: .7rem .8rem !important; }}
+div[data-testid="stVerticalBlockBorderWrapper"] {{ background: var(--surface); border-color: var(--border) !important; border-radius: .7rem !important; box-shadow: 0 1px 3px rgba(15,23,42,.05); }}
+div[data-testid="stVerticalBlockBorderWrapper"] > div {{ padding: .85rem 1rem !important; }}
 
 /* Dashboard */
 .kpi-card {{ min-height: 7rem; padding: .85rem 1rem; background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--primary); border-radius: .65rem; box-shadow: 0 1px 3px rgba(15,23,42,.05); }}
@@ -293,21 +265,17 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{ padding: .7rem .8rem !i
 .graph-empty-state {{ color:var(--muted); border:1px dashed var(--border-strong); }}
 
 /* Codes */
-.code-hero {{ padding:.9rem 1.05rem; background:var(--mint-bg); border:1px solid var(--mint-border); border-radius:.7rem; }}
-.code-hero-title {{ font-size:1rem; font-weight:780; color:var(--mint-title); }}
-.code-hero-text {{ margin-top:.2rem; color:var(--mint-text); font-size:.75rem; }}
-.code-patient-grid {{ display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:.45rem; margin-top:.7rem; }}
-.code-patient-field {{ min-width:0; padding:.45rem .55rem; background:color-mix(in srgb,var(--surface) 72%,transparent); border:1px solid var(--mint-border); border-radius:.45rem; }}
-.code-patient-field small {{ display:block; color:var(--muted); font-size:.62rem; font-weight:750; text-transform:uppercase; }}
-.code-patient-field b {{ display:block; margin-top:.15rem; color:var(--text); font-size:.76rem; overflow-wrap:anywhere; }}
+.code-hero {{ padding:1rem 1.1rem; background:linear-gradient(135deg,#ecfdf5,#f0fdfa); border:1px solid #99f6e4; border-radius:.7rem; }}
+.code-hero-title {{ font-size:1rem; font-weight:780; color:#115e59; }}
+.code-hero-text {{ margin-top:.25rem; color:#47706d; font-size:.75rem; }}
+.code-patient {{ margin-top:.65rem; font-size:.78rem; color:var(--text); }}
 .code-empty {{ padding:1.2rem; text-align:center; color:var(--muted); background:var(--surface-soft); border:1px dashed var(--border-strong); border-radius:.55rem; }}
 
 @media (max-width:760px) {{
-    .block-container {{ padding:3.7rem .75rem .75rem !important; }}
-    .page-heading {{ font-size:1.3rem; }}
+    .block-container {{ padding:3.8rem .75rem .75rem !important; }}
+    .page-heading {{ font-size:1.35rem; }}
     .overview-grid {{ grid-template-columns:1fr; }}
     .graph-node-card, .graph-empty-state {{ font-size:.56rem; }}
-    .code-patient-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
 }}
 </style>
 """,
@@ -405,23 +373,6 @@ def get_record_insights(record):
     ))
 
 
-def is_documented_cpt_candidate(item, documentation):
-    """Return True for CPT suggestions that are documented in the note, even if not yet performed."""
-    if not documentation or not str(documentation).strip():
-        return False
-    if not is_explicitly_performed:
-        return False
-    status = classify_procedure_status(item, documentation) if classify_procedure_status else "unknown"
-    return status in {"performed", "ordered_not_performed", "planned", "recommended", "discussed"}
-
-
-def is_chest_xray_multi_view_documented(documentation):
-    normalized = str(documentation or "").lower()
-    mentions_chest_xray = re.search(r"\bchest\s+(?:x\s*[- ]?\s*ray|radiographs?)\b", normalized)
-    mentions_views = re.search(r"\b(?:1\s*(?:-|to)\s*2|two|2)\s*[- ]?\s*views?\b", normalized)
-    return bool(mentions_chest_xray and mentions_views)
-
-
 def get_code_suggestions(insights, documentation=None):
     """Return separate ICD/CPT suggestions, using documentation context when supplied."""
     st.session_state.code_generation_error = ""
@@ -466,17 +417,7 @@ def get_code_suggestions(insights, documentation=None):
             # Diagnoses, symptoms, and risk factors should be evaluated for ICD-10.
             icd_items.append(item)
 
-    if documentation and infer_documented_procedures:
-        cpt_items.extend(infer_documented_procedures(documentation))
-    cpt_items = list(dict.fromkeys(cpt_items))
-
     try:
-        if is_chest_xray_multi_view_documented(documentation):
-            cpt_items = [
-                item for item in cpt_items
-                if "chest x-ray" not in item.lower() and "chest x ray" not in item.lower()
-            ]
-            cpt_items.append("Chest x ray 2 views")
         if documentation is not None and get_icd10_candidate_sets and get_cpt_candidate_sets:
             evidence = {item: documentation for item in icd_items}
             icd_details = get_icd10_candidate_sets(icd_items, threshold=80, evidence_by_term=evidence)
@@ -491,7 +432,7 @@ def get_code_suggestions(insights, documentation=None):
             ]
             performed_cpt_items = [
                 item for item in cpt_items
-                if is_documented_cpt_candidate(item, documentation)
+                if is_explicitly_performed and is_explicitly_performed(item, documentation)
             ]
             cpt_details = get_cpt_candidate_sets(performed_cpt_items, documentation, threshold=80)
             cpt_results = [
@@ -543,11 +484,7 @@ def get_backend_code_suggestions(insights, documentation=""):
         documentation_lower = documentation.lower()
         if "ct scan" in documentation_lower and "head" in documentation_lower:
             procedures.append("CT scan of head without contrast")
-        if is_chest_xray_multi_view_documented(documentation):
-            procedures = [
-                item for item in procedures
-                if "chest x-ray" not in item.lower() and "chest x ray" not in item.lower()
-            ]
+        if "chest x-ray" in documentation_lower and "two view" in documentation_lower:
             procedures.append("Chest x ray 2 views")
         return HealthcareApiClient().match_codes(conditions, procedures, documentation)
     except (RuntimeError, requests.exceptions.HTTPError):
@@ -579,15 +516,14 @@ def filter_billing_eligible_cpt_results(cpt_results, documentation):
             unverifiable_count += 1
             continue
 
-        status_procedure, status_documentation = _procedure_status_inputs(source_procedure, documentation)
         status = (
-            classify_procedure_status(status_procedure, status_documentation)
+            classify_procedure_status(source_procedure, documentation)
             if classify_procedure_status
             else "unknown"
         )
         if status == "unknown":
             unverifiable_count += 1
-        elif is_explicitly_performed and is_explicitly_performed(status_procedure, status_documentation):
+        elif is_explicitly_performed and is_explicitly_performed(source_procedure, documentation):
             billing_eligible_cpt_results.append(candidate)
         else:
             excluded_nonperformed_count += 1
@@ -599,150 +535,17 @@ def filter_billing_eligible_cpt_results(cpt_results, documentation):
     )
 
 
-def _procedure_status_inputs(procedure, documentation):
-    status_procedure = re.sub(r"\bwithout\s+contrast\b", "", str(procedure or ""), flags=re.IGNORECASE)
-    status_documentation = re.sub(r"\bwithout\s+contrast\b", "", str(documentation or ""), flags=re.IGNORECASE)
-    return status_procedure, status_documentation
-
-
-def prepare_billing_lines(cpt_results, documentation, encounter_date=None, encounter_type=None):
+def prepare_billing_lines(cpt_results, documentation, encounter_date=None):
     billing_eligible_cpt_results, excluded_count, unverifiable_count = (
         filter_billing_eligible_cpt_results(cpt_results, documentation)
     )
-    if billing_eligible_cpt_results:
-        billing_rows = (
-            build_cpt_bill_rows(billing_eligible_cpt_results, encounter_date)
-            if encounter_type is None
-            else build_cpt_bill_rows(billing_eligible_cpt_results, encounter_date, encounter_type)
-        )
-    else:
-        billing_rows = []
+    billing_rows = (
+        build_cpt_bill_rows(billing_eligible_cpt_results, encounter_date)
+        if billing_eligible_cpt_results
+        else []
+    )
     return billing_eligible_cpt_results, excluded_count, unverifiable_count, billing_rows
 
-
-def normalize_billing_code(value):
-    return re.sub(r"[\s.-]", "", str(value or "").strip()).upper()
-
-
-def normalize_estimate_quantity(value):
-    try:
-        quantity = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return 1
-    if not math.isfinite(quantity) or quantity <= 0:
-        return 1
-    return int(quantity) if quantity.is_integer() else quantity
-
-
-@st.cache_data(show_spinner=False)
-def load_chargemaster_department_map (file_path, sheet_name):
-    path = Path(file_path)
-    if not path.is_file():
-        return {}
-    try:
-        frame = pd.read_excel(path, sheet_name=sheet_name, header=3, dtype=str, keep_default_na=False, engine="openpyxl")
-    except (OSError, ValueError, ImportError):
-        return {}
-    code_column = next((column for column in frame.columns if re.sub(r"[^a-z0-9]", "", str(column).lower()) in {"cpthcpcs", "cpthcpcscode"}), None)
-    department_column = next((column for column in frame.columns if str(column).strip().casefold() == "department"), None)
-    if code_column is None or department_column is None:
-        return {}
-    departments = {}
-    for _, row in frame.iterrows():
-        code = normalize_billing_code(row.get(code_column))
-        department = str(row.get(department_column) or "").strip()
-        if code and department:
-            departments.setdefault(code, department)
-    return departments
-
-
-def build_estimated_hospital_bill(cpt_results, encounter_type):
-    candidates_by_code = {}
-    for candidate in cpt_results or []:
-        if not isinstance(candidate, dict):
-            continue
-        raw_code = str(candidate.get("CPT/HCPCS Code") or "").strip()
-        normalized_code = normalize_billing_code(raw_code)
-        if not raw_code or not normalized_code:
-            continue
-        raw_quantity = candidate.get("quantity", candidate.get("Quantity"))
-        quantity_is_explicit = raw_quantity is not None and str(raw_quantity).strip() != ""
-        existing = candidates_by_code.get(normalized_code)
-        if existing is None:
-            candidates_by_code[normalized_code] = {
-                **candidate,
-                "CPT/HCPCS Code": raw_code,
-                "quantity": normalize_estimate_quantity(raw_quantity),
-                "quantity_explicit": quantity_is_explicit,
-            }
-        elif quantity_is_explicit and not existing.get("quantity_explicit"):
-            existing["quantity"] = normalize_estimate_quantity(raw_quantity)
-            existing["quantity_explicit"] = True
-
-    candidates = list(candidates_by_code.values())
-    encounter_key = "IPD" if str(encounter_type).upper() in {"IPD", "INPATIENT"} else "OPD"
-    pricing_rows = build_cpt_bill_rows(candidates, encounter_type=encounter_key)
-    sheet_name = "IPD Charges" if encounter_key == "IPD" else "OPD Charges"
-    departments = load_chargemaster_department_map(
-        PROJECT_ROOT / "Original_Hospital_IPD_OPD_Charges_200_Demo.xlsx",
-        sheet_name,
-    )
-    table_rows = []
-    total = 0.0
-    unpriced_codes = []
-    for row in pricing_rows:
-        code = str(row.get("CPT/HCPCS Code", ""))
-        quantity = normalize_estimate_quantity(row.get("Quantity", 1))
-        unit_value = row.get("Estimated Rate", "Not available")
-        try:
-            unit_charge = float(unit_value)
-        except (TypeError, ValueError):
-            unit_charge = None
-        if row.get("Rate Source Status") == "Found" and unit_charge is not None:
-            gross_charge = round(quantity * unit_charge, 2)
-            total += gross_charge
-            pricing_status = "Priced"
-            unit_display = f"${unit_charge:,.2f}"
-            gross_display = f"${gross_charge:,.2f}"
-        else:
-            gross_charge = None
-            pricing_status = "Unpriced"
-            unit_display = "Unpriced"
-            gross_display = "Unpriced"
-            unpriced_codes.append(code)
-        table_rows.append({
-            "CPT/HCPCS Code": code,
-            "Service Description": row.get("Procedure Description", "Not specified"),
-            "Department": departments.get(normalize_billing_code(code), "Not specified"),
-            "Quantity": quantity,
-            "Unit Charge": unit_display,
-            "Gross Charge": gross_display,
-            "Pricing Status": pricing_status,
-        })
-    return table_rows, round(total, 2), list(dict.fromkeys(unpriced_codes))
-
-
-def persist_consultation_cpt_results(record, cpt_results):
-    history = record.get("cpt_results_history", [])
-    history = list(history) if isinstance(history, list) else []
-    known_candidates = {
-        (normalize_billing_code(item.get("CPT/HCPCS Code")), str(item.get("Extracted Procedure", "")).casefold())
-        for item in history if isinstance(item, dict)
-    }
-    for candidate in cpt_results or []:
-        identity = (
-            normalize_billing_code(candidate.get("CPT/HCPCS Code")),
-            str(candidate.get("Extracted Procedure", "")).casefold(),
-        )
-        if identity not in known_candidates:
-            history.append(dict(candidate))
-            known_candidates.add(identity)
-    record["cpt_results_history"] = history
-    record["code_results"] = {
-        **(record.get("code_results") if isinstance(record.get("code_results"), dict) else {}),
-        "cpt": list(cpt_results or []),
-    }
-    save_db(st.session_state.records)
 
 
 # ============================================================
@@ -776,7 +579,6 @@ def render_sidebar(active_page):
             ("dashboard", "Overview"),
             ("new_consult", "Consultations"),
             ("ehr_data", "EHR Demo Data"),
-            ("ipd_billing", "IPD Billing"),
             ("review", "Clinical Review"),
             ("codes", "Codes"),
         ]
@@ -789,16 +591,6 @@ def render_sidebar(active_page):
                 st.rerun()
             if active_page == page_key:
                 st.markdown('<div class="nav-active-marker"></div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="shell-divider"></div><div class="shell-section-label">ADMINISTRATION</div>', unsafe_allow_html=True)
-        admin_active = active_page in {"admin_dashboard", "super_admin"}
-        with st.expander("Admin", expanded=admin_active):
-            for page_key, label in (("admin_dashboard", "Admin Dashboard"), ("super_admin", "Super Admin")):
-                if st.button(label, key=f"nav_{page_key}", use_container_width=True):
-                    go_to(page_key)
-                    st.rerun()
-                if active_page == page_key:
-                    st.markdown('<div class="nav-active-marker"></div>', unsafe_allow_html=True)
 
         st.markdown('<div class="shell-divider"></div><div class="shell-section-label">UTILITY</div>', unsafe_allow_html=True)
         theme_value = st.selectbox("Theme", ["Light", "Dark"], index=0 if st.session_state.get("theme", "Light") == "Light" else 1, key="theme_selector")
@@ -1057,177 +849,155 @@ def show_ehr_demo_data():
     render_header("EHR Demo Data", "Synthetic patient and bill records from the demo workbook and backend", show_new=False)
 
     client = HealthcareApiClient()
-    workbook_exists = EHR_DATA_FILE.is_file()
-    try:
-        patient_response = client.list_patients()
-        patients = patient_response.get("patients", [])
-        backend_connected = True
-    except (RuntimeError, requests.exceptions.RequestException, OSError, ValueError) as error:
-        patients = []
-        backend_connected = False
-        st.warning(f"EHR backend unavailable. Showing the Excel source read-only. ({error})")
+    backend_read_methods = [
+        "export_patient_data",
+        "list_patients",
+        "get_patient_chart",
+    ]
+    backend_create_methods = ["create_patient", "create_patient_record"]
+    backend_edit_methods = ["update_patient", "replace_patient_records"]
+    backend_delete_methods = ["delete_patient"]
+    backend_bill_methods = ["generate_patient_bill"]
 
-    if backend_connected:
-        st.success(f"JSON EHR connected · {len(patients)} patient(s) · {EHR_JSON_FILE.name}")
-        patient_options = {
-            f"{item.get('display_name') or item.get('Legal_Name') or item.get('Patient_ID')} · {item.get('patient_id') or item.get('Patient_ID')}": str(item.get("patient_id") or item.get("Patient_ID"))
-            for item in patients
-        }
-        patient_labels = list(patient_options)
-        admin_patient_id = st.session_state.pop("admin_ehr_patient_id", None)
-        admin_patient_index = next((index for index, patient_id in enumerate(patient_options.values()) if patient_id == admin_patient_id), 0)
-        if patient_labels and admin_patient_id:
-            st.session_state["ehr_patient_selection"] = patient_labels[admin_patient_index]
-        selected_label = st.selectbox("Patient", patient_labels, index=admin_patient_index if patient_labels else None, placeholder="Select a patient", key="ehr_patient_selection")
-        selected_patient_id = patient_options.get(selected_label) if selected_label else None
-        chart = client.get_patient_chart(selected_patient_id) if selected_patient_id else {"patient": {}, "records": {}}
+    backend_read_available = any(hasattr(client, method) for method in backend_read_methods)
+    backend_create_available = any(hasattr(client, method) for method in backend_create_methods)
+    backend_edit_available = any(hasattr(client, method) for method in backend_edit_methods)
+    backend_delete_available = any(hasattr(client, method) for method in backend_delete_methods)
+    backend_bill_available = any(hasattr(client, method) for method in backend_bill_methods)
+    workbook_exists = EHR_DATA_FILE.exists()
+    workbook = None
+    backend_connected = False
+    workbook_fallback_active = False
+    backend_payload = None
 
-        overview_tab, edit_tab, records_tab, billing_tab, create_tab = st.tabs(
-            ["Patient chart", "Edit patient", "Clinical records", "Bill history", "Create patient"]
-        )
-        with overview_tab:
-            if chart.get("patient"):
-                st.dataframe(pd.DataFrame([chart["patient"]]), width="stretch", hide_index=True)
-                sheet_names = list(chart.get("records", {}))
-                if sheet_names:
-                    selected_sheet = st.selectbox("Chart section", sheet_names, key=f"ehr_chart_sheet_{selected_patient_id}")
-                    st.dataframe(pd.DataFrame(chart["records"].get(selected_sheet, [])), width="stretch", hide_index=True)
-                else:
-                    st.info("No related clinical records are available for this patient.")
-            else:
-                st.info("Select a patient to view their chart.")
-
-        with edit_tab:
-            if chart.get("patient"):
-                current = chart["patient"]
-                with st.form(f"ehr_patient_edit_{selected_patient_id}"):
-                    first, last = st.columns(2)
-                    first_name = first.text_input("First name", value=str(current.get("First_Name") or ""))
-                    last_name = last.text_input("Last name", value=str(current.get("Last_Name") or ""))
-                    legal_name = st.text_input("Legal name", value=str(current.get("Legal_Name") or ""))
-                    mrn = st.text_input("MRN", value=str(current.get("MRN") or ""))
-                    city, state = st.columns(2)
-                    city_value = city.text_input("City", value=str(current.get("City") or ""))
-                    state_value = state.text_input("State", value=str(current.get("State") or ""))
-                    email = st.text_input("Email", value=str(current.get("Email") or ""))
-                    mobile = st.text_input("Mobile", value=str(current.get("Mobile") or ""))
-                    if st.form_submit_button("Save patient changes", type="primary"):
-                        try:
-                            updated = client.update_patient(selected_patient_id, {
-                                "First_Name": first_name, "Last_Name": last_name,
-                                "Legal_Name": legal_name or f"{first_name} {last_name}".strip(),
-                                "MRN": mrn, "City": city_value, "State": state_value,
-                                "Email": email, "Mobile": mobile,
-                            })
-                            st.success(f"Updated {updated.get('Legal_Name') or selected_patient_id}.")
-                            st.rerun()
-                        except (RuntimeError, requests.exceptions.RequestException, ValueError) as error:
-                            st.error(f"Patient update failed: {error}")
-                st.divider()
-                confirm_delete = st.checkbox("I understand this permanently removes this synthetic patient and linked records.", key=f"ehr_delete_confirm_{selected_patient_id}")
-                if st.button("Delete patient", type="secondary", disabled=not confirm_delete, key=f"ehr_delete_{selected_patient_id}"):
-                    try:
-                        client.delete_patient(selected_patient_id)
-                        st.success("Patient and linked records deleted.")
-                        st.rerun()
-                    except (RuntimeError, requests.exceptions.RequestException, ValueError) as error:
-                        st.error(f"Patient deletion failed: {error}")
-            else:
-                st.info("Select a patient to edit or delete.")
-
-        with records_tab:
-            chart_records = chart.get("records", {})
-            if selected_patient_id and chart_records:
-                sheet_name = st.selectbox("Editable record sheet", list(chart_records), key=f"ehr_edit_sheet_{selected_patient_id}")
-                records_frame = pd.DataFrame(chart_records.get(sheet_name, []))
-                edited_records = st.data_editor(records_frame, num_rows="dynamic", width="stretch", hide_index=True, key=f"ehr_records_{selected_patient_id}_{sheet_name}")
-                if st.button("Save record changes", key=f"ehr_save_records_{selected_patient_id}_{sheet_name}"):
-                    try:
-                        client.replace_patient_records(selected_patient_id, sheet_name, edited_records.to_dict("records"))
-                        st.success(f"Saved {sheet_name} records.")
-                        st.rerun()
-                    except (RuntimeError, requests.exceptions.RequestException, ValueError) as error:
-                        st.error(f"Record update failed: {error}")
-                with st.expander("Add a record"):
-                    record_json = st.text_area("Record JSON", value="{}", key=f"ehr_new_record_json_{selected_patient_id}_{sheet_name}")
-                    if st.button("Add record", key=f"ehr_add_record_{selected_patient_id}_{sheet_name}"):
-                        try:
-                            record_payload = json.loads(record_json)
-                            if not isinstance(record_payload, dict):
-                                raise ValueError("Record JSON must be an object.")
-                            client.create_patient_record(selected_patient_id, sheet_name, record_payload)
-                            st.success("Record added.")
-                            st.rerun()
-                        except (json.JSONDecodeError, ValueError, RuntimeError, requests.exceptions.RequestException) as error:
-                            st.error(f"Record creation failed: {error}")
-            else:
-                st.info("Select a patient with chart records to edit them.")
-
-        with billing_tab:
-            if selected_patient_id:
-                try:
-                    bill_response = client.list_bills(selected_patient_id)
-                    bills = bill_response.get("bills", [])
-                except (RuntimeError, requests.exceptions.RequestException, ValueError) as error:
-                    bills = []
-                    st.error(f"Bill history could not be loaded: {error}")
-                if bills:
-                    bill_labels = [f"{item.get('Bill_ID') or item.get('bill_id')} · {item.get('Status') or item.get('status')}" for item in bills]
-                    chosen_bill = st.selectbox("Saved draft bill", range(len(bills)), format_func=lambda index: bill_labels[index], key=f"ehr_bill_history_{selected_patient_id}")
-                    st.json(bills[chosen_bill])
-                    st.info(BILLING_NOTICE)
-                else:
-                    st.info("No saved draft bills for this patient.")
-            else:
-                st.info("Select a patient to view saved bills.")
-
-        with create_tab:
-            with st.form("ehr_patient_create"):
-                first, last = st.columns(2)
-                new_first_name = first.text_input("First name")
-                new_last_name = last.text_input("Last name")
-                new_mrn = st.text_input("MRN (optional)")
-                new_city = st.text_input("City")
-                if st.form_submit_button("Create patient", type="primary"):
-                    if not new_first_name.strip() or not new_last_name.strip():
-                        st.error("First and last name are required.")
-                    else:
-                        try:
-                            created = client.create_patient({
-                                "First_Name": new_first_name.strip(),
-                                "Last_Name": new_last_name.strip(),
-                                "Legal_Name": f"{new_first_name.strip()} {new_last_name.strip()}",
-                                "MRN": new_mrn.strip() or None,
-                                "City": new_city.strip() or None,
-                            })
-                            st.success(f"Created {created.get('Legal_Name')} · {created.get('Patient_ID')}.")
-                            st.rerun()
-                        except (RuntimeError, requests.exceptions.RequestException, ValueError) as error:
-                            st.error(f"Patient creation failed: {error}")
-    else:
-        if not workbook_exists:
-            st.error(f"The Excel fallback workbook was not found at {EHR_DATA_FILE}.")
-            return
+    if backend_read_available:
         try:
-            workbook = load_ehr_demo_workbook(str(EHR_DATA_FILE))
-        except FileNotFoundError as error:
-            st.error(str(error))
-            return
-        st.info("Read-only Excel fallback is active. Patient edits, record writes, deletion, and saved-bill actions are disabled until the backend is available.")
-        available_sheets = list(workbook)
-        if not available_sheets:
-            st.warning("No workbook sheets were loaded.")
-            return
-        selected_sheet = st.selectbox("Workbook sheet", available_sheets, index=available_sheets.index("Patient_Master") if "Patient_Master" in available_sheets else 0)
-        frame = workbook.get(selected_sheet, pd.DataFrame())
-        if isinstance(frame, pd.DataFrame) and not frame.empty:
-            st.caption(f"{len(frame)} row(s) · source remains unchanged: {EHR_DATA_FILE.name}")
-            st.dataframe(frame, width="stretch", hide_index=True)
+            for method_name in backend_read_methods:
+                if hasattr(client, method_name):
+                    backend_payload = getattr(client, method_name)()
+                    backend_connected = True
+                    break
+        except (RuntimeError, requests.exceptions.RequestException, OSError, ValueError) as error:
+            st.warning(f"Backend EHR read endpoint failed: {error}")
+            backend_connected = False
+
+    if backend_connected and backend_payload is not None:
+        st.success("Backend connected")
+        st.caption("Using the live EHR backend for read operations.")
+        read_capable = True
+        can_create = backend_create_available
+        can_edit = backend_edit_available
+        can_delete = backend_delete_available
+        can_bill = backend_bill_available
+        st.dataframe(pd.DataFrame(backend_payload.get("sheets", {}).get("Patient_Master", {}).get("records", [])) if isinstance(backend_payload, dict) else pd.DataFrame())
+        st.caption("The live EHR backend is connected. Create, update, delete, and patient bill generation remain available only when the backend exposes those methods.")
+
+        action_cols = st.columns(4)
+        action_labels = ["Create patient", "Edit patient", "Delete patient", "Generate patient bill"]
+        for column, label, disabled in zip(action_cols, action_labels, [not can_create, not can_edit, not can_delete, not can_bill]):
+            column.button(label, disabled=disabled)
+    else:
+        if workbook_exists:
+            workbook_fallback_active = True
+            try:
+                workbook = load_ehr_demo_workbook(str(EHR_DATA_FILE))
+                st.warning("Backend unavailable, using Excel fallback")
+                st.info("Read-only Excel fallback is active. Start the EHR backend to enable create, update, delete and patient-specific bill generation.")
+            except FileNotFoundError as error:
+                st.error(str(error))
+                workbook = {}
+                workbook_fallback_active = False
+                st.error("Workbook unavailable")
         else:
-            st.info("This sheet has no tabular rows to display.")
-        st.button("Create patient", disabled=True)
-        st.button("Save patient or record changes", disabled=True)
-        st.button("Generate saved bill", disabled=True)
+            st.warning("Workbook unavailable")
+            st.error(f"The EHR demo workbook was not found at {EHR_DATA_FILE}.")
+            return
+
+        available_sheets = list(workbook.keys())
+        if not available_sheets:
+            st.warning("No workbook sheets were loaded from the EHR demo Excel file.")
+            return
+
+        selected_sheet = st.selectbox("Record type", available_sheets, index=available_sheets.index("Patient_Master") if "Patient_Master" in available_sheets else 0)
+        sheet_frame = workbook.get(selected_sheet, pd.DataFrame())
+
+        if isinstance(sheet_frame, pd.DataFrame) and not sheet_frame.empty:
+            st.caption(f"Loaded {len(sheet_frame)} row(s) from the '{selected_sheet}' sheet.")
+        else:
+            st.warning(f"The requested record type is unavailable: {selected_sheet}")
+            return
+
+        read_capable = True
+        can_create = False
+        can_edit = False
+        can_delete = False
+        can_bill = False
+
+        patient_cols = []
+        if isinstance(sheet_frame, pd.DataFrame):
+            patient_cols = [
+                col for col in sheet_frame.columns
+                if any(term in str(col).lower() for term in ("patient", "mrn", "first_name", "last_name", "name", "legal_name", "member", "id"))
+            ]
+
+        st.caption(f"Workbook sheet: {selected_sheet}")
+        search_query = st.text_input("Search patient records", placeholder="Enter patient name, MRN, or ID") if patient_cols else None
+        if search_query is not None:
+            if patient_cols:
+                search_lower = search_query.strip().lower()
+                if search_lower:
+                    matches = sheet_frame.apply(
+                        lambda row: any(
+                            isinstance(row.get(col), str) and search_lower in str(row.get(col)).lower()
+                            or isinstance(row.get(col), (int, float)) and str(row.get(col)).lower() == search_lower
+                            for col in patient_cols
+                        ),
+                        axis=1,
+                    )
+                    sheet_frame = sheet_frame[matches].copy()
+                st.caption(f"{len(sheet_frame)} patient record(s) match the current filter.")
+            else:
+                st.info("No patient-identifying columns are available in this workbook sheet, so patient search and filtering are unavailable here.")
+
+        if "Patient_Master" in workbook and selected_sheet == "Patient_Master":
+            if any(col in workbook["Patient_Master"].columns for col in ["Patient_ID", "MRN", "First_Name", "Last_Name", "Legal_Name"]):
+                st.dataframe(workbook["Patient_Master"], use_container_width=True, hide_index=True)
+            else:
+                st.warning("The Patient_Master sheet is available, but the expected patient demographics columns are missing.")
+        else:
+            st.dataframe(sheet_frame, use_container_width=True, hide_index=True)
+
+        action_cols = st.columns(4)
+        action_labels = ["Create patient", "Edit patient", "Delete patient", "Generate patient bill"]
+        for column, label, disabled in zip(
+            action_cols,
+            action_labels,
+            [True, True, True, True],
+        ):
+            column.button(label, disabled=disabled)
+
+        st.caption("Read-only Excel fallback is active. Start the EHR backend to enable create, update, delete and patient-specific bill generation.")
+
+    status_cols = st.columns(5)
+    status_items = [
+        ("Backend connected", backend_connected),
+        ("Backend unavailable, using Excel fallback", workbook_fallback_active),
+        ("Workbook unavailable", not workbook_exists),
+        ("Read-only mode", workbook_fallback_active or not (backend_create_available or backend_edit_available or backend_delete_available or backend_bill_available)),
+        ("Full read/write mode", (backend_create_available or backend_edit_available or backend_delete_available or backend_bill_available) and backend_connected),
+    ]
+    for column, (label, active) in zip(status_cols, status_items):
+        if active:
+            column.success(label)
+        else:
+            column.caption(label)
+
+    if not workbook_fallback_active and not backend_connected:
+        st.warning("No backend EHR read endpoint is active and the Excel fallback is unavailable.")
+
+    if workbook_exists and not backend_connected:
+        st.caption(f"Workbook available at: {EHR_DATA_FILE}")
+        st.caption(f"Workbook sheets: {', '.join(sorted(workbook.keys())) if workbook else 'none loaded'}")
 
 
 def render_transcript(record, read_only=False):
@@ -1314,94 +1084,6 @@ def show_dashboard():
 # ============================================================
 # 6. NEW CONSULTATION
 # ============================================================
-def has_first_and_last_name(name):
-    return len(str(name or "").split()) >= 2
-
-
-def register_consultation_in_ehr(record, client=None, patient=None, dob=None, encounter_type="Office Visit"):
-    client = client or HealthcareApiClient()
-    patient = patient or {}
-    patient_id = str(record.get("ehr_patient_id") or record.get("patient_id") or patient.get("Patient_ID") or patient.get("patient_id") or "")
-    if not patient_id:
-        patient_name = str(record.get("name", "")).strip()
-        if not has_first_and_last_name(patient_name):
-            raise ValueError("Enter the patient's first and last name before creating an EHR patient.")
-        first_name, last_name = patient_name.split(maxsplit=1)
-        if not dob:
-            try:
-                approximate_age = max(0, int(record.get("age", "")))
-            except (TypeError, ValueError) as error:
-                raise ValueError("A date of birth is required to create an EHR patient.") from error
-            dob = f"{max(1900, datetime.now().year - approximate_age)}-01-01"
-        patient = client.create_patient({
-            "First_Name": first_name,
-            "Last_Name": last_name,
-            "DOB": dob,
-            "Sex_at_Birth": record.get("gender", "Other"),
-        })
-        patient_id = str(patient.get("Patient_ID") or patient.get("patient_id") or "")
-        if not patient_id:
-            raise ValueError("The EHR patient response did not include a patient ID.")
-
-    record["ehr_patient_id"] = patient_id
-    record["patient_id"] = patient_id
-    record["mrn"] = patient.get("MRN", record.get("mrn", ""))
-    record["dob"] = patient.get("DOB", dob or record.get("dob", ""))
-    try:
-        service_date = datetime.strptime(record.get("date", ""), "%d/%m/%Y").date().isoformat()
-    except (TypeError, ValueError):
-        service_date = datetime.now().date().isoformat()
-
-    if not record.get("ehr_encounter_id"):
-        encounter = client.create_patient_record(patient_id, "Encounters", {
-            "Encounter_ID": f"ENC-{uuid.uuid4().hex[:10].upper()}",
-            "Patient_ID": patient_id,
-            "Date": service_date,
-            "Type": encounter_type,
-            "Department": "Primary Care",
-            "Provider": record.get("doctor", "Unassigned"),
-            "Facility": "NuuCare Demo",
-            "Status": "In Progress",
-            "Primary_Diagnosis": record.get("patient_summary", ""),
-            "Priority": "Routine",
-        })
-        record["ehr_encounter_id"] = encounter.get("Encounter_ID")
-    if not record.get("ehr_encounter_id"):
-        raise ValueError("The EHR encounter response did not include an encounter ID.")
-
-    if not record.get("ehr_note_id"):
-        note = client.create_patient_record(patient_id, "Clinical_Notes", {
-            "Note_ID": f"NOTE-{uuid.uuid4().hex[:10].upper()}",
-            "Patient_ID": patient_id,
-            "Encounter_ID": record["ehr_encounter_id"],
-            "Note_Type": "SOAP",
-            "Service_Date": service_date,
-            "Author": record.get("doctor", "Unassigned"),
-            "Note_Summary": record.get("summary") or record.get("patient_summary", ""),
-            "Status": "Draft" if record.get("status") == "Pending" else "Signed",
-        })
-        record["ehr_note_id"] = note.get("Note_ID")
-    return record
-
-
-def update_ehr_clinical_note(record, approved=False):
-    patient_id = record.get("ehr_patient_id") or record.get("patient_id")
-    note_id = record.get("ehr_note_id")
-    if not patient_id or not note_id:
-        return
-    client = HealthcareApiClient()
-    chart = client.get_patient_chart(str(patient_id))
-    notes = chart.get("records", {}).get("Clinical_Notes", [])
-    for note in notes:
-        if str(note.get("Note_ID", "")) == str(note_id):
-            note["Note_Summary"] = record.get("summary", "")
-            note["Status"] = "Signed" if approved else "Draft"
-            break
-    else:
-        return
-    client.replace_patient_records(str(patient_id), "Clinical_Notes", notes)
-
-
 def show_new_consultation():
     render_sidebar("new_consult")
     render_header("New Consultation", "Capture patient context and generate clinical documentation", show_new=False)
@@ -1410,59 +1092,16 @@ def show_new_consultation():
         go_to("dashboard"); st.rerun()
     with st.container(border=True):
         st.markdown('<div class="section-title">Patient Information</div><div class="section-subtitle">Enter the basic context for this consultation</div>', unsafe_allow_html=True)
-        ehr_patients = []
-        try:
-            ehr_patients = HealthcareApiClient().list_patients().get("patients", [])
-        except (RuntimeError, requests.exceptions.RequestException, OSError, ValueError):
-            pass
-        ehr_patient_options = {"Create new EHR patient": None}
-        ehr_patient_by_id = {}
-        for item in ehr_patients:
-            patient_id = str(item.get("patient_id") or item.get("Patient_ID") or "")
-            if patient_id:
-                patient_label = item.get("display_name") or item.get("Legal_Name") or patient_id
-                ehr_patient_options[f"{patient_label} · {patient_id}"] = patient_id
-                ehr_patient_by_id[patient_id] = item
-        selected_ehr_patient_label = st.selectbox("Patient source", list(ehr_patient_options), key="consult_ehr_patient")
-        selected_ehr_patient_id = ehr_patient_options[selected_ehr_patient_label]
-        selected_ehr_patient = ehr_patient_by_id.get(selected_ehr_patient_id, {})
-        consultation_encounter_type = st.selectbox("Encounter type", ["Outpatient", "Inpatient"], key="consult_encounter_type")
-        patient_widget_key = selected_ehr_patient_id or "manual"
-        default_name = str(selected_ehr_patient.get("Legal_Name") or selected_ehr_patient.get("display_name") or "")
-        default_dob = str(selected_ehr_patient.get("DOB") or "").split("T")[0]
-        default_age = ""
-        if default_dob:
-            try:
-                birth_date = datetime.fromisoformat(default_dob).date()
-                today = datetime.now().date()
-                default_age = str(today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day)))
-            except ValueError:
-                default_dob = ""
-        gender_options = ["Male", "Female", "Other"]
-        default_gender = str(selected_ehr_patient.get("Sex_at_Birth") or selected_ehr_patient.get("Gender") or "Male")
-        gender_index = gender_options.index(default_gender) if default_gender in gender_options else 2
-        if selected_ehr_patient_id:
-            st.caption("Selected synthetic EHR patient will be linked to this consultation.")
         left, right = st.columns(2, gap="large")
-        patient_name = left.text_input("Full Name", value=default_name, key=f"consult_patient_name_{patient_widget_key}", placeholder="e.g. John Doe")
-        name_is_valid = bool(selected_ehr_patient_id) or has_first_and_last_name(patient_name)
-        if patient_name.strip() and not name_is_valid:
-            st.info("Enter both the patient's first and last name, or select an existing EHR patient.")
-        patient_age = right.text_input("Age", value=default_age, key=f"consult_patient_age_{patient_widget_key}")
-        patient_gender = left.selectbox("Gender", gender_options, index=gender_index, key=f"consult_patient_gender_{patient_widget_key}")
-        patient_dob = left.text_input(
-            "Date of birth (YYYY-MM-DD)",
-            value=default_dob,
-            key=f"consult_patient_dob_{patient_widget_key}",
-            disabled=bool(selected_ehr_patient_id),
-            placeholder="Required to create a new EHR patient",
-        )
+        patient_name = left.text_input("Full Name", placeholder="e.g. John Doe")
+        patient_age = right.text_input("Age")
+        patient_gender = left.selectbox("Gender", ["Male", "Female", "Other"])
         doctor_name = right.text_input("Attending Doctor", placeholder="e.g. Dr. Sarah Jenkins")
     with st.container(border=True):
         st.markdown('<div class="section-title">Record Consultation</div><div class="section-subtitle">Capture the clinical conversation securely</div>', unsafe_allow_html=True)
         audio_file = st.audio_input("Record Audio", label_visibility="collapsed")
         st.markdown('<div class="recording-prompt">Audio input ready when you are</div>', unsafe_allow_html=True)
-        if st.button("Transcribe and Generate Summary", type="primary", use_container_width=True, disabled=audio_file is None or not patient_name.strip() or not name_is_valid):
+        if st.button("Transcribe and Generate Summary", type="primary", use_container_width=True, disabled=audio_file is None or not patient_name.strip()):
             try:
                 with st.spinner("Transcribing audio..."):
                     recognizer = sr.Recognizer()
@@ -1480,52 +1119,16 @@ def show_new_consultation():
             st.markdown('<div class="section-title">Summary and Key Highlights</div>', unsafe_allow_html=True)
             render_summary(result.get("soap_note") or result.get("patient_summary", "Not available"))
             for highlight in result.get("key_highlights", []): st.markdown(f"- {highlight}")
-            if result.get("recommendations"):
-                st.success("Clinical Decision Support recommendations generated.")
-                with st.container(border=True):
-                    st.markdown('<div class="section-title">Clinical Decision Support Recommendations</div><div class="section-subtitle">Evidence-based guidance for this encounter</div>', unsafe_allow_html=True)
-                    render_cds_recommendations(result["recommendations"])
-            else:
-                st.info("Clinical Decision Support recommendations will be generated when you save this note.")
-            if st.button("Generate Note", type="primary", use_container_width=True, disabled=not name_is_valid):
+            st.info("Clinical Decision Support recommendations will be generated for every encounter.")
+            if st.button("Generate Note", type="primary", use_container_width=True):
                 encounter = result
                 try:
                     encounter = HealthcareApiClient().add_cds(encounter)
                 except (RuntimeError, requests.exceptions.HTTPError) as error:
-                    if encounter.get("recommendations"):
-                        st.warning(f"CDS could not be refreshed; keeping the existing recommendations. Details: {error}")
-                    else:
-                        st.warning(f"CDS is unavailable; the consultation will be saved without recommendations. Details: {error}")
+                    st.error(f"CDS generation failed: {error}"); return
                 transcript = encounter.get("transcript", "")
                 doctor, now = doctor_name.strip() or "Doctor", datetime.now()
-                ehr_encounter_id = None
-                if selected_ehr_patient_id:
-                    ehr_encounter_id = f"ENC-{uuid.uuid4().hex[:10].upper()}"
-                    try:
-                        HealthcareApiClient().create_patient_record(selected_ehr_patient_id, "Encounters", {
-                            "Encounter_ID": ehr_encounter_id,
-                            "Patient_ID": selected_ehr_patient_id,
-                            "Date": now.date().isoformat(),
-                            "Type": consultation_encounter_type,
-                            "Department": "Clinical Operations",
-                            "Provider": doctor,
-                            "Facility": "NuuCare Demo",
-                            "Status": "In Progress",
-                            "Disposition_or_Follow_Up": "Clinical note pending review.",
-                        })
-                    except (RuntimeError, requests.exceptions.RequestException, ValueError) as error:
-                        st.warning(f"The note was created, but its EHR encounter link could not be saved: {error}")
-                        ehr_encounter_id = None
-                record = {"id": f"PT-{str(uuid.uuid4().int)[:6]}", "name": patient_name.strip(), "age": patient_age.strip(), "gender": patient_gender, "doctor": doctor, "date": now.strftime("%d/%m/%Y"), "time": now.strftime("%H:%M"), "status": "Pending", "transcript": transcript, "transcript_data": parse_transcript_entries(transcript, doctor, patient_name.strip()), "summary": encounter.get("soap_note", ""), "patient_summary": encounter.get("patient_summary", ""), "key_highlights": encounter.get("key_highlights", []), "retrieved_guidelines": encounter.get("retrieved_guidelines", ""), "recommendations": encounter.get("recommendations", ""), "ehr_patient_id": selected_ehr_patient_id, "ehr_encounter_type": consultation_encounter_type, "dob": patient_dob.strip(), "cds_requested": bool(encounter.get("recommendations")), "analysis_version": ANALYSIS_VERSION}
-                try:
-                    register_consultation_in_ehr(
-                        record,
-                        patient=selected_ehr_patient,
-                        dob=patient_dob.strip() or None,
-                        encounter_type=consultation_encounter_type,
-                    )
-                except (RuntimeError, requests.exceptions.RequestException, ValueError, KeyError) as error:
-                    st.warning(f"Consultation saved locally, but EHR registration was unavailable: {error}")
+                record = {"id": f"PT-{str(uuid.uuid4().int)[:6]}", "name": patient_name.strip(), "age": patient_age.strip(), "gender": patient_gender, "doctor": doctor, "date": now.strftime("%d/%m/%Y"), "time": now.strftime("%H:%M"), "status": "Pending", "transcript": transcript, "transcript_data": parse_transcript_entries(transcript, doctor, patient_name.strip()), "summary": encounter.get("soap_note", ""), "patient_summary": encounter.get("patient_summary", ""), "key_highlights": encounter.get("key_highlights", []), "retrieved_guidelines": encounter.get("retrieved_guidelines", ""), "recommendations": encounter.get("recommendations", ""), "cds_requested": True, "analysis_version": ANALYSIS_VERSION}
                 st.session_state.records.insert(0, record)
                 save_db(st.session_state.records)
                 open_record(record)
@@ -1566,16 +1169,11 @@ def show_review_note():
                         record["patient_summary"] = regenerated.get("patient_summary", "")
                         record["key_highlights"] = regenerated.get("key_highlights", [])
                         record["transcript"] = regenerated.get("transcript", record.get("transcript", ""))
-                        record["summary"] = record["summary"] or record["patient_summary"]
                         for index, existing in enumerate(st.session_state.records):
                             if existing.get("id") == record.get("id"):
                                 st.session_state.records[index] = record
                                 break
                         save_db(st.session_state.records)
-                        try:
-                            update_ehr_clinical_note(record)
-                        except (RuntimeError, requests.exceptions.RequestException, ValueError) as error:
-                            st.warning(f"SOAP note was saved locally but could not sync to the EHR: {error}")
                         st.session_state.edit_summary = record["summary"]
                         st.success("SOAP note generated from the stored transcript.")
                         st.rerun()
@@ -1639,23 +1237,18 @@ def show_review_note():
                         if insight != "None" and insight not in manual_insights:
                             manual_insights.append(insight)
                     st.session_state.edit_summary = append_selected_insights_to_note(st.session_state.edit_summary, selected)
-                    record["summary"] = st.session_state.edit_summary
                     st.session_state.detected_insights = get_record_insights(record)
                     for index, existing in enumerate(st.session_state.records):
                         if existing.get("id") == record.get("id"):
                             st.session_state.records[index] = record
                             break
                     save_db(st.session_state.records)
-                    try:
-                        update_ehr_clinical_note(record)
-                    except (RuntimeError, requests.exceptions.RequestException, ValueError) as error:
-                        st.warning(f"Note was updated locally but could not sync to the EHR: {error}")
                     st.session_state.insight_count = 1
                 push_col.button("Push to Note", type="primary", use_container_width=True, on_click=push_selected_insights_to_note)
     edited_df = render_transcript(record, read_only=is_approved)
     def persist(approved=False):
         if record.get("status") == "Approved":
-            return False
+            return
         record["summary"] = st.session_state.edit_summary
         record["transcript_data"] = edited_df.to_dict("records")
         if approved:
@@ -1665,18 +1258,11 @@ def show_review_note():
             if existing.get("id") == record.get("id"):
                 st.session_state.records[index] = record; break
         save_db(st.session_state.records)
-        try:
-            update_ehr_clinical_note(record, approved=approved)
-        except (RuntimeError, requests.exceptions.RequestException, ValueError) as error:
-            st.warning(f"Consultation saved locally but EHR note sync failed: {error}")
-        return True
     if record.get("status") == "Pending":
         st.divider()
         _, draft_col, final_col = st.columns([7, 1.5, 1.5], vertical_alignment="center")
-        if draft_col.button("Save Draft", use_container_width=True):
-            if persist(False): st.success("Draft and audit trail updated.")
-        if final_col.button("Finalize Note", type="primary", use_container_width=True):
-            if persist(True): go_to("dashboard"); st.rerun()
+        if draft_col.button("Save Draft", use_container_width=True): persist(False); st.success("Draft and audit trail updated.")
+        if final_col.button("Finalize Note", type="primary", use_container_width=True): persist(True); go_to("dashboard"); st.rerun()
 
 
 # ============================================================
@@ -1695,7 +1281,7 @@ def show_codes():
     current = st.session_state.current_record
     default_label = next((label for label, value in record_lookup.items() if current and value.get("id") == current.get("id")), list(record_lookup)[0])
     labels = list(record_lookup)
-    selected_label = st.selectbox("Patient encounter", labels, index=labels.index(default_label), width="stretch")
+    selected_label = st.selectbox("Select patient encounter", labels, index=labels.index(default_label))
     record = record_lookup[selected_label]
 
     if not current or current.get("id") != record.get("id"):
@@ -1705,21 +1291,11 @@ def show_codes():
     insights = get_record_insights(record)
     st.session_state.detected_insights = insights
 
-    patient_fields = (
-        ("Patient", record.get("name", "Not recorded")),
-        ("Local consultation ID", record.get("id", "Not recorded")),
-        ("Age", record.get("age", "Not recorded")),
-        ("Gender / sex", record.get("gender", "Not recorded")),
-        ("Attending doctor", record.get("doctor", "Not recorded")),
-    )
-    patient_field_html = "".join(
-        f'<div class="code-patient-field"><small>{escape(label)}</small><b>{escape(str(value or "Not recorded"))}</b></div>'
-        for label, value in patient_fields
-    )
     st.markdown(
-        '<div class="code-hero"><div class="code-hero-title">Medical Coding Workspace</div>'
-        '<div class="code-hero-text">Review and validate diagnosis and service suggestions for this consultation before clinical or billing use.</div>'
-        f'<div class="code-patient-grid">{patient_field_html}</div></div>',
+        f'<div class="code-hero"><div class="code-hero-title">Medical Coding Workspace</div>'
+        f'<div class="code-hero-text">Review machine-suggested codes before adding them to the clinical or billing workflow.</div>'
+        f'<div class="code-patient"><b>{escape(record.get("name", ""))}</b> · {escape(record.get("id", ""))} · '
+        f'{escape(str(record.get("age", "")))}y · {escape(record.get("gender", ""))} · {escape(record.get("doctor", "N/A"))}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -1730,18 +1306,16 @@ def show_codes():
         else:
             st.warning("No codable insights were detected in this encounter transcript.")
 
-
-    generate_col, review_col = st.columns([1, 1])
-    if generate_col.button("Regenerate Code Suggestions", type="primary", use_container_width=True, disabled=not insights):
-        with st.spinner("Matching ICD-10 and CPT/HCPCS codes..."):
-            st.session_state.code_results = get_backend_code_suggestions(insights, record.get("transcript", ""))
-            persist_consultation_cpt_results(record, st.session_state.code_results.get("cpt", []))
-            st.session_state.code_record_id = record.get("id")
-            st.session_state.code_results_signature = get_code_results_signature(insights, record.get("transcript", ""))
-            st.session_state.code_matcher_version = CODE_MATCHER_VERSION
-        st.rerun()
-    if review_col.button("Return to Clinical Review", use_container_width=True):
-        go_to("review"); st.rerun()
+        generate_col, review_col = st.columns([1, 1])
+        if generate_col.button("Regenerate Code Suggestions", type="primary", use_container_width=True, disabled=not insights):
+            with st.spinner("Matching ICD-10 and CPT/HCPCS codes..."):
+                st.session_state.code_results = get_backend_code_suggestions(insights, record.get("transcript", ""))
+                st.session_state.code_record_id = record.get("id")
+                st.session_state.code_results_signature = get_code_results_signature(insights, record.get("transcript", ""))
+                st.session_state.code_matcher_version = CODE_MATCHER_VERSION
+            st.rerun()
+        if review_col.button("Return to Clinical Review", use_container_width=True):
+            go_to("review"); st.rerun()
 
     current_signature = get_code_results_signature(insights, record.get("transcript", ""))
     cached_results_are_stale = (
@@ -1752,7 +1326,6 @@ def show_codes():
     if cached_results_are_stale:
         with st.spinner("Matching ICD-10 and CPT/HCPCS codes..."):
             st.session_state.code_results = get_backend_code_suggestions(insights, record.get("transcript", ""))
-            persist_consultation_cpt_results(record, st.session_state.code_results.get("cpt", []))
         st.session_state.code_record_id = record.get("id")
         st.session_state.code_results_signature = current_signature
         st.session_state.code_matcher_version = CODE_MATCHER_VERSION
@@ -1767,18 +1340,18 @@ def show_codes():
 
     unified_rows = [
         {
-            "Documentation/Service": item.get("Extracted Condition", ""),
-            "Code Type": "ICD-10-CM",
+            "Documentation / service": item.get("Extracted Condition", ""),
+            "Code type": "ICD-10-CM",
             "Code": item.get("ICD-10 Code", ""),
-            "Matched Description or Purpose": item.get("Matched Disease/Injury", ""),
+            "Purpose": item.get("Matched Disease/Injury", ""),
         }
         for item in code_results.get("icd10", [])
     ] + [
         {
-            "Documentation/Service": item.get("Extracted Procedure", ""),
-            "Code Type": "CPT/HCPCS",
+            "Documentation / service": item.get("Extracted Procedure", ""),
+            "Code type": "CPT/HCPCS",
             "Code": item.get("CPT/HCPCS Code", ""),
-            "Matched Description or Purpose": item.get("Matched Procedure/Service", ""),
+            "Purpose": item.get("Matched Procedure/Service", ""),
         }
         for item in code_results.get("cpt", [])
     ]
@@ -1789,49 +1362,6 @@ def show_codes():
         else:
             st.info("No diagnosis or procedure codes are available for this encounter.")
 
-    st.markdown('<div class="section-title">Estimated Hospital Bill</div>', unsafe_allow_html=True)
-    encounter_type_label = st.selectbox(
-        "Encounter type",
-        ["Outpatient (OPD)", "Inpatient (IPD)"],
-        key=f"estimate_encounter_type_{record.get('id')}",
-        width="stretch",
-    )
-    encounter_type = "OPD" if encounter_type_label.startswith("Outpatient") else "IPD"
-    if st.button("Calculate Bill", type="primary", key=f"calculate_estimated_bill_{record.get('id')}"):
-        selected_cpt_results = (
-            st.session_state.code_results.get("cpt", [])
-            if st.session_state.code_record_id == record.get("id")
-            else []
-        )
-        estimated_rows, estimated_total, unpriced_codes = build_estimated_hospital_bill(
-            selected_cpt_results,
-            encounter_type,
-        )
-        st.session_state.estimated_hospital_bill = {
-            "record_id": record.get("id"),
-            "encounter_type": encounter_type,
-            "code_results_signature": current_signature,
-            "rows": estimated_rows,
-            "total": estimated_total,
-            "unpriced_codes": unpriced_codes,
-        }
-
-    estimate = st.session_state.get("estimated_hospital_bill")
-    if (
-        estimate
-        and estimate.get("record_id") == record.get("id")
-        and estimate.get("encounter_type") == encounter_type
-        and estimate.get("code_results_signature") == current_signature
-    ):
-        if estimate["rows"]:
-            st.dataframe(pd.DataFrame(estimate["rows"]), hide_index=True, width="stretch")
-        else:
-            st.info("No generated CPT/HCPCS codes are available to price for this consultation.")
-        if estimate["unpriced_codes"]:
-            st.warning("Unpriced codes: " + ", ".join(estimate["unpriced_codes"]))
-        st.metric("Total Estimated Bill", f"${estimate['total']:,.2f}", border=True)
-    st.caption("Estimated gross chargemaster charges only. This is not a finalized claim, payer-allowed amount, or patient responsibility amount.")
-
     icd_tab, cpt_tab = st.tabs(["ICD-10 Diagnosis Codes", "CPT/HCPCS Procedure Codes"])
     with icd_tab:
         with st.container(border=True):
@@ -1841,6 +1371,45 @@ def show_codes():
         with st.container(border=True):
             st.markdown('<div class="section-title">Suggested CPT/HCPCS Codes</div><div class="section-subtitle">Procedure and service code candidates based on detected tests and procedures</div>', unsafe_allow_html=True)
             render_code_results(code_results.get("cpt", []), "No CPT/HCPCS suggestions are available. Generate codes or verify that code_matcher is configured.")
+
+        (
+            billing_eligible_cpt_results,
+            excluded_count,
+            unverifiable_count,
+            billing_rows,
+        ) = prepare_billing_lines(
+            code_results.get("cpt", []),
+            record.get("transcript", ""),
+            record.get("date"),
+        )
+        st.markdown("### Estimated CPT/HCPCS Billing Lines")
+        st.caption(
+            "These amounts are chargemaster-based estimates only and are not finalized claims, "
+            "payer-allowed amounts, or patient responsibility amounts."
+        )
+        count_columns = st.columns(3)
+        count_columns[0].metric("Billing-eligible CPT candidates", len(billing_eligible_cpt_results))
+        count_columns[1].metric("Excluded non-performed candidates", excluded_count)
+        count_columns[2].metric("Unverifiable performed status", unverifiable_count)
+
+        if unverifiable_count:
+            st.warning(
+                f"{unverifiable_count} CPT candidate(s) were excluded because performed status could not be verified."
+            )
+
+        if billing_rows:
+            unavailable_statuses = {
+                "Chargemaster unavailable",
+                "Unsupported format",
+                "Missing required columns",
+            }
+            if any(row["Rate Source Status"] in unavailable_statuses for row in billing_rows):
+                st.warning(
+                    "Chargemaster is unavailable or invalid; coding suggestions remain available."
+                )
+            st.dataframe(pd.DataFrame(billing_rows), hide_index=True, width="stretch")
+        else:
+            st.info("No billing-eligible CPT candidates are available for chargemaster lookup.")
 
     st.caption("Coding suggestions require professional validation before billing, claim submission, or addition to the legal health record.")
 
@@ -1854,19 +1423,6 @@ elif st.session_state.page == "new_consult":
     show_new_consultation()
 elif st.session_state.page == "ehr_data":
     show_ehr_demo_data()
-elif st.session_state.page == "ipd_billing":
-    show_ipd_billing(render_sidebar, render_header)
-elif st.session_state.page == "admin_dashboard":
-    show_admin_dashboard(
-        st.session_state.records,
-        load_ehr_demo_workbook,
-        EHR_DATA_FILE,
-        open_record,
-        render_sidebar,
-        render_header,
-    )
-elif st.session_state.page == "super_admin":
-    show_super_admin(render_sidebar, render_header)
 elif st.session_state.page == "review":
     show_review_note()
 elif st.session_state.page == "codes":

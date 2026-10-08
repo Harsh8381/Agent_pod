@@ -87,31 +87,31 @@ class HealthcareApiClient:
         return response.json()
 
     def export_patient_data(self, patient_id: str | None = None) -> dict:
-        return self._request("GET", "/patients/export", params={"patient_id": patient_id} if patient_id else None)
+        return self._request("GET", "/ehr/export", params={"patient_id": patient_id} if patient_id else None)
 
     def list_patients(self) -> dict:
-        return self._request("GET", "/patients")
+        return self._request("GET", "/ehr/patients")
 
     def get_patient_chart(self, patient_id: str) -> dict:
-        return self._request("GET", f"/patients/{patient_id}/chart")
+        return self._request("GET", f"/ehr/patients/{patient_id}/chart")
 
     def create_patient(self, payload: dict) -> dict:
-        return self._request("POST", "/patients", json_body=payload)
+        return self._request("POST", "/ehr/patients", json_body=payload)
 
-    def create_patient_record(self, patient_id: str, sheet_name: str, payload: dict) -> dict:
-        return self._request("POST", f"/patients/{patient_id}/records/{sheet_name}", json_body=payload)
+    def create_patient_record(self, patient_id: str, record_type: str, payload: dict) -> dict:
+        return self._request("POST", f"/ehr/patients/{patient_id}/records", json_body={"record_type": record_type, "payload": payload})
 
     def add_patient_record(self, patient_id: str, record_type: str, payload: dict) -> dict:
         return self.create_patient_record(patient_id, record_type, payload)
 
     def update_patient(self, patient_id: str, payload: dict) -> dict:
-        return self._request("PUT", f"/patients/{patient_id}", json_body=payload)
+        return self._request("PUT", f"/ehr/patients/{patient_id}", json_body=payload)
 
-    def replace_patient_records(self, patient_id: str, sheet_name: str, records: list[dict]) -> list[dict]:
-        return self._request("PUT", f"/patients/{patient_id}/records/{sheet_name}", json_body={"records": records})
+    def replace_patient_records(self, patient_id: str, record_type: str, records: list[dict]) -> list[dict]:
+        return self._request("PUT", f"/ehr/patients/{patient_id}/records/{record_type}", json_body={"records": records})
 
     def delete_patient(self, patient_id: str) -> dict:
-        return self._request("DELETE", f"/patients/{patient_id}")
+        return self._request("DELETE", f"/ehr/patients/{patient_id}")
 
     def list_patient_records(self, patient_id: str, record_type: str | None = None) -> dict:
         return self._request("GET", f"/ehr/patients/{patient_id}/records", params={"record_type": record_type} if record_type else None)
@@ -119,29 +119,11 @@ class HealthcareApiClient:
     def list_bills(self, patient_id: str | None = None) -> dict:
         return self._request("GET", "/ehr/bills", params={"patient_id": patient_id} if patient_id else None)
 
-    def generate_patient_bill(
-        self,
-        patient_id: str,
-        payload: dict | None = None,
-        encounter_id: str | None = None,
-        services: list[dict] | None = None,
-    ) -> dict:
-        if isinstance(payload, str):
-            legacy_encounter_id = payload
-            legacy_services = encounter_id if isinstance(encounter_id, list) else services
-            payload = {"encounter_id": legacy_encounter_id, "services": legacy_services or []}
-            encounter_id = None
-            services = None
-        bill_payload = dict(payload or {})
-        bill_payload.setdefault("encounter_id", encounter_id)
-        bill_payload.setdefault("services", services or [])
-        encounter_type = str(bill_payload.get("encounter_type") or "OPD").upper()
-        route_type = "ipd" if encounter_type in {"IPD", "INPATIENT"} else "opd"
-        endpoint = f"/patients/{patient_id}/bills/{route_type}"
+    def generate_patient_bill(self, patient_id: str, encounter_id: str | None = None, services: list[dict] | None = None) -> dict:
         return self._request(
             "POST",
-            endpoint,
-            json_body=bill_payload,
+            f"/ehr/patients/{patient_id}/bills",
+            json_body={"encounter_id": encounter_id, "services": services or []},
         )
 
     def _post_encounter(self, endpoint: str, transcript: str, include_cds: bool) -> dict:

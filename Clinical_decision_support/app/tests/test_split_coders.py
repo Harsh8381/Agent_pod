@@ -82,5 +82,20 @@ def test_common_documented_services_receive_cpt_codes():
     assert {"80053", "80061", "81001", "84153", "76641"}.issubset(codes)
 
 
+def test_documented_inpatient_services_receive_specific_cpt_codes():
+    response = TestClient(app).post(
+        "/codes",
+        json={
+            "documentation": (
+                "Blood cultures collected. Troponin test performed. "
+                "Complete transthoracic echocardiogram performed."
+            )
+        },
+    )
+    assert response.status_code == 200
+    codes = {item["CPT/HCPCS Code"] for item in response.json()["cpt"]}
+    assert {"87040", "84484", "93306"}.issubset(codes)
+
+
 def test_medications_do_not_receive_cpt_codes():
     assert cpt_coder.get_cpt_codes(["metformin", "ibuprofen", "paracetamol"]) == []

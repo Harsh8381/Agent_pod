@@ -20,16 +20,6 @@ import speech_recognition as sr
 import streamlit as st
 
 try:
-    from frontend.ipd_billing import show_ipd_billing
-except ModuleNotFoundError:
-    from ipd_billing import show_ipd_billing
-
-try:
-    from frontend.admin_console import show_admin_dashboard, show_super_admin
-except ModuleNotFoundError:
-    from admin_console import show_admin_dashboard, show_super_admin
-
-try:
     from frontend.api_client import HealthcareApiClient
 except ModuleNotFoundError:
     from api_client import HealthcareApiClient
@@ -46,7 +36,6 @@ try:
         extract_performed_procedures,
         get_cpt_codes,
         get_cpt_candidate_sets,
-        infer_documented_procedures,
         is_explicitly_performed,
     )
     from icd10_coder import get_icd10_candidate_sets, get_icd10_codes
@@ -58,7 +47,6 @@ except ModuleNotFoundError:
             extract_performed_procedures,
             get_cpt_codes,
             get_cpt_candidate_sets,
-            infer_documented_procedures,
             is_explicitly_performed,
         )
         from icd10_coder import get_icd10_candidate_sets, get_icd10_codes
@@ -68,7 +56,6 @@ except ModuleNotFoundError:
         extract_performed_procedures = None
         get_cpt_candidate_sets = None
         get_cpt_codes = None
-        infer_documented_procedures = None
         get_icd10_candidate_sets = None
         get_icd10_codes = None
         is_explicitly_performed = None
@@ -93,7 +80,7 @@ BILLING_NOTICE = (
     "payer-allowed amount, or patient responsibility amount. Professional coding and billing validation is required."
 )
 ANALYSIS_VERSION = "2"
-CODE_MATCHER_VERSION = "4"
+CODE_MATCHER_VERSION = "3"
 
 
 # ============================================================
@@ -186,45 +173,43 @@ header[data-testid="stHeader"] {{
 button[data-testid="stSidebarCollapsedControl"],
 [data-testid="stSidebarCollapseButton"] button {{ z-index: 1100; }}
 [data-testid="stAppViewContainer"] > .main {{ padding-top: 0; }}
-.block-container {{ max-width: 1500px; padding: 3.7rem 1.25rem 1rem !important; }}
-[data-testid="stVerticalBlock"] {{ gap: .45rem; }}
-[data-testid="stHorizontalBlock"] {{ gap: .6rem; }}
+.block-container {{ max-width: 1500px; padding: 4.25rem 1.5rem 1.25rem !important; }}
+[data-testid="stVerticalBlock"] {{ gap: .7rem; }}
+[data-testid="stHorizontalBlock"] {{ gap: .75rem; }}
 [data-testid="stElementContainer"] {{ margin-bottom: 0; }}
-hr {{ margin: .2rem 0 .45rem !important; border-color: var(--border) !important; }}
+hr {{ margin: .25rem 0 .65rem !important; border-color: var(--border) !important; }}
 
 /* Sidebar */
 [data-testid="stSidebar"] {{ background: var(--surface); border-right: 1px solid var(--border); }}
-[data-testid="stSidebar"] > div:first-child {{ padding-top: .45rem; }}
+[data-testid="stSidebar"] > div:first-child {{ padding-top: .75rem; }}
 [data-testid="stSidebar"] * {{ color: var(--text) !important; }}
-[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{ gap: .16rem; }}
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{ gap: .3rem; }}
 [data-testid="stSidebar"] .stButton > button {{
-    min-height: 2.25rem; justify-content: flex-start; padding-top: .32rem; padding-bottom: .32rem; background: transparent !important;
+    min-height: 2.45rem; justify-content: flex-start; background: transparent !important;
     border: 1px solid transparent !important; box-shadow: none !important;
 }}
-[data-testid="stSidebar"] [data-testid="stExpander"] details summary {{ min-height: 2.15rem; padding-top: .3rem; padding-bottom: .3rem; }}
-[data-testid="stSidebar"] [data-testid="stExpander"] details > div {{ padding: .2rem .35rem .35rem !important; }}
 [data-testid="stSidebar"] .stButton > button:hover {{
     background: var(--sidebar-hover) !important; border-color: var(--primary) !important;
 }}
-.shell-logo {{ margin: .1rem 0 0; font-size: 1.45rem; font-weight: 800; color: var(--text) !important; }}
+.shell-logo {{ margin: .15rem 0 0; font-size: 1.55rem; font-weight: 800; color: var(--text) !important; }}
 .shell-logo span {{ color: #5eead4 !important; }}
-.shell-subtitle {{ margin: .08rem 0 .8rem; color: var(--muted) !important; font-size: .72rem; }}
-.shell-section-label {{ margin: .45rem 0 .18rem; color: var(--muted) !important; font-size: .62rem; font-weight: 800; letter-spacing: .1rem; }}
-.shell-divider {{ height: 1px; margin: .45rem 0; background: var(--border); }}
-.shell-user {{ display: flex; align-items: center; gap: .55rem; margin-top: .7rem; padding: .55rem; border-top: 1px solid var(--border); }}
+.shell-subtitle {{ margin: .1rem 0 1.2rem; color: var(--muted) !important; font-size: .75rem; }}
+.shell-section-label {{ margin: .65rem 0 .25rem; color: var(--muted) !important; font-size: .64rem; font-weight: 800; letter-spacing: .11rem; }}
+.shell-divider {{ height: 1px; margin: .65rem 0; background: var(--border); }}
+.shell-user {{ display: flex; align-items: center; gap: .65rem; margin-top: 1rem; padding: .7rem; border-top: 1px solid var(--border); }}
 .shell-user b, .shell-user small {{ display: block; }}
 .shell-user small {{ color: var(--muted) !important; font-size: .67rem; }}
 .user-avatar {{ display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; background: #0f766e; color: #fff !important; font-size: .7rem; font-weight: 800; }}
 .nav-active-marker {{ height: 2px; margin: -.36rem .65rem .15rem; border-radius: 2px; background: var(--primary); }}
 
 /* Shared */
-.page-heading {{ margin: 0; font-size: 1.5rem; line-height: 1.12; font-weight: 780; color: var(--text); }}
+.page-heading {{ margin: 0; font-size: 1.65rem; line-height: 1.18; font-weight: 780; color: var(--text); }}
 .page-kicker {{ margin: .2rem 0 0; font-size: .78rem; color: var(--muted); }}
 .section-title {{ margin: 0; font-size: 1rem; line-height: 1.25; font-weight: 750; color: var(--text); }}
 .section-subtitle {{ margin: .12rem 0 .55rem; font-size: .72rem; color: var(--muted); }}
 .toolbar-label, .insight-heading {{ margin: .55rem 0 .2rem; color: var(--muted); font-size: .65rem; font-weight: 800; letter-spacing: .08rem; text-transform: uppercase; }}
 .section-gap {{ height: .45rem; }}
-.stButton > button {{ min-height: 2.25rem; border-radius: .42rem; font-weight: 650; }}
+.stButton > button {{ min-height: 2.4rem; border-radius: .48rem; font-weight: 650; }}
 [data-testid="stMain"] .stButton > button,
 [data-testid="stAppViewContainer"] .main .stButton > button {{
     background: var(--primary) !important; border: 1px solid var(--primary) !important;
@@ -237,8 +222,8 @@ hr {{ margin: .2rem 0 .45rem !important; border-color: var(--border) !important;
 [data-testid="stMain"] .stButton > button:disabled {{ background: #94bdb8 !important; border-color: #94bdb8 !important; opacity: .72 !important; }}
 .stTextInput, .stSelectbox, .stDateInput, .stTextArea, .stRadio {{ margin-bottom: 0 !important; }}
 [data-baseweb="input"], [data-baseweb="select"] > div, textarea {{ border-radius: .45rem !important; }}
-div[data-testid="stVerticalBlockBorderWrapper"] {{ background: var(--surface); border-color: var(--border) !important; border-radius: .6rem !important; box-shadow: 0 1px 3px rgba(15,23,42,.05); }}
-div[data-testid="stVerticalBlockBorderWrapper"] > div {{ padding: .7rem .8rem !important; }}
+div[data-testid="stVerticalBlockBorderWrapper"] {{ background: var(--surface); border-color: var(--border) !important; border-radius: .7rem !important; box-shadow: 0 1px 3px rgba(15,23,42,.05); }}
+div[data-testid="stVerticalBlockBorderWrapper"] > div {{ padding: .85rem 1rem !important; }}
 
 /* Dashboard */
 .kpi-card {{ min-height: 7rem; padding: .85rem 1rem; background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--primary); border-radius: .65rem; box-shadow: 0 1px 3px rgba(15,23,42,.05); }}
@@ -303,8 +288,8 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{ padding: .7rem .8rem !i
 .code-empty {{ padding:1.2rem; text-align:center; color:var(--muted); background:var(--surface-soft); border:1px dashed var(--border-strong); border-radius:.55rem; }}
 
 @media (max-width:760px) {{
-    .block-container {{ padding:3.7rem .75rem .75rem !important; }}
-    .page-heading {{ font-size:1.3rem; }}
+    .block-container {{ padding:3.8rem .75rem .75rem !important; }}
+    .page-heading {{ font-size:1.35rem; }}
     .overview-grid {{ grid-template-columns:1fr; }}
     .graph-node-card, .graph-empty-state {{ font-size:.56rem; }}
     .code-patient-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
@@ -465,10 +450,6 @@ def get_code_suggestions(insights, documentation=None):
         else:
             # Diagnoses, symptoms, and risk factors should be evaluated for ICD-10.
             icd_items.append(item)
-
-    if documentation and infer_documented_procedures:
-        cpt_items.extend(infer_documented_procedures(documentation))
-    cpt_items = list(dict.fromkeys(cpt_items))
 
     try:
         if is_chest_xray_multi_view_documented(documentation):
@@ -776,7 +757,6 @@ def render_sidebar(active_page):
             ("dashboard", "Overview"),
             ("new_consult", "Consultations"),
             ("ehr_data", "EHR Demo Data"),
-            ("ipd_billing", "IPD Billing"),
             ("review", "Clinical Review"),
             ("codes", "Codes"),
         ]
@@ -789,16 +769,6 @@ def render_sidebar(active_page):
                 st.rerun()
             if active_page == page_key:
                 st.markdown('<div class="nav-active-marker"></div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="shell-divider"></div><div class="shell-section-label">ADMINISTRATION</div>', unsafe_allow_html=True)
-        admin_active = active_page in {"admin_dashboard", "super_admin"}
-        with st.expander("Admin", expanded=admin_active):
-            for page_key, label in (("admin_dashboard", "Admin Dashboard"), ("super_admin", "Super Admin")):
-                if st.button(label, key=f"nav_{page_key}", use_container_width=True):
-                    go_to(page_key)
-                    st.rerun()
-                if active_page == page_key:
-                    st.markdown('<div class="nav-active-marker"></div>', unsafe_allow_html=True)
 
         st.markdown('<div class="shell-divider"></div><div class="shell-section-label">UTILITY</div>', unsafe_allow_html=True)
         theme_value = st.selectbox("Theme", ["Light", "Dark"], index=0 if st.session_state.get("theme", "Light") == "Light" else 1, key="theme_selector")
@@ -1074,11 +1044,7 @@ def show_ehr_demo_data():
             for item in patients
         }
         patient_labels = list(patient_options)
-        admin_patient_id = st.session_state.pop("admin_ehr_patient_id", None)
-        admin_patient_index = next((index for index, patient_id in enumerate(patient_options.values()) if patient_id == admin_patient_id), 0)
-        if patient_labels and admin_patient_id:
-            st.session_state["ehr_patient_selection"] = patient_labels[admin_patient_index]
-        selected_label = st.selectbox("Patient", patient_labels, index=admin_patient_index if patient_labels else None, placeholder="Select a patient", key="ehr_patient_selection")
+        selected_label = st.selectbox("Patient", patient_labels, index=0 if patient_labels else None, placeholder="Select a patient")
         selected_patient_id = patient_options.get(selected_label) if selected_label else None
         chart = client.get_patient_chart(selected_patient_id) if selected_patient_id else {"patient": {}, "records": {}}
 
@@ -1854,19 +1820,6 @@ elif st.session_state.page == "new_consult":
     show_new_consultation()
 elif st.session_state.page == "ehr_data":
     show_ehr_demo_data()
-elif st.session_state.page == "ipd_billing":
-    show_ipd_billing(render_sidebar, render_header)
-elif st.session_state.page == "admin_dashboard":
-    show_admin_dashboard(
-        st.session_state.records,
-        load_ehr_demo_workbook,
-        EHR_DATA_FILE,
-        open_record,
-        render_sidebar,
-        render_header,
-    )
-elif st.session_state.page == "super_admin":
-    show_super_admin(render_sidebar, render_header)
 elif st.session_state.page == "review":
     show_review_note()
 elif st.session_state.page == "codes":

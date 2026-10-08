@@ -5,40 +5,6 @@ from pydantic import BaseModel, Field
 from app.agent.context import EncounterContext
 
 
-class EhrPatientPayload(BaseModel):
-    patient_id: str | None = None
-    mrn: str | None = None
-    first_name: str | None = None
-    last_name: str | None = None
-    legal_name: str | None = None
-    dob: str | None = None
-    age: int | None = None
-    sex_at_birth: str | None = None
-    pronouns: str | None = None
-    marital_status: str | None = None
-    race: str | None = None
-    ethnicity: str | None = None
-    preferred_language: str | None = None
-    secondary_language: str | None = None
-    pcp: str | None = None
-    record_status: str | None = None
-    height_cm: float | None = None
-    weight_kg: float | None = None
-    bmi: float | None = None
-    city: str | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
-
-
-class EhrRecordPayload(BaseModel):
-    record_type: str | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
-
-
-class EhrBillPayload(BaseModel):
-    encounter_id: str | None = None
-    services: list[dict[str, Any]] = Field(default_factory=list)
-
-
 class PatientAnalysisRequest(BaseModel):
     patient_summary: str = Field(..., min_length=1, description="Patient summary to analyze")
 

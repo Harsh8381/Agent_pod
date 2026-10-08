@@ -86,6 +86,40 @@ def test_empty_cpt_results_are_safe():
     assert filter_billing_eligible_cpt_results([], "") == ([], 0, 0)
 
 
+def test_generic_xray_transcript_still_triggers_cpt_recommendation():
+    import frontend.streamlit_app as streamlit_app
+
+    insights = streamlit_app.get_detected_insights("Chest xray was performed today for cough.")
+
+    assert "Chest X-ray" in insights
+    assert streamlit_app.get_code_suggestions(insights, "Chest xray was performed today for cough.")['cpt']
+
+
+def test_ordered_ct_scan_still_surfaces_as_documented_cpt_suggestion():
+    import frontend.streamlit_app as streamlit_app
+
+    insights = ["CT Scan"]
+    documentation = (
+        "I am also ordering a CT scan of the head to rule out an underlying abnormality "
+        "and continue monitoring the patient."
+    )
+
+    result = streamlit_app.get_code_suggestions(insights, documentation)
+
+    assert result["cpt"]
+    assert any(item["CPT/HCPCS Code"] == "70450" for item in result["cpt"])
+
+
+def test_code_result_cache_signature_changes_with_transcript():
+    import frontend.streamlit_app as streamlit_app
+
+    insights = ["Chest X-ray", "History of Hypertension"]
+
+    assert streamlit_app.get_code_results_signature(insights, "Chest X-ray performed today.") != (
+        streamlit_app.get_code_results_signature(insights, "Chest X-ray planned.")
+    )
+
+
 def test_only_performed_candidates_reach_chargemaster(monkeypatch):
     import frontend.streamlit_app as streamlit_app
 
@@ -114,7 +148,7 @@ def test_only_performed_candidates_reach_chargemaster(monkeypatch):
     assert lookup_inputs == [[performed]]
 
 
-def test_api_first_local_fallback_remains_performed_status_gated(monkeypatch):
+def test_api_first_local_fallback_keeps_documented_procedures_in_code_suggestions(monkeypatch):
     def backend_unavailable(self, conditions, procedures, documentation):
         raise RuntimeError("backend unavailable")
 
@@ -127,6 +161,7 @@ def test_api_first_local_fallback_remains_performed_status_gated(monkeypatch):
         ["Complete Blood Count"], "A complete blood count was performed today."
     )
 
-    assert planned["cpt"] == []
+    assert planned["cpt"]
+    assert planned["cpt"][0]["CPT/HCPCS Code"] == "85025"
     assert performed["cpt"]
     assert performed["cpt"][0]["CPT/HCPCS Code"] == "85025"

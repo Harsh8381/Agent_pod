@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import json
 import re
 from decimal import Decimal, InvalidOperation
 from datetime import date
@@ -74,38 +73,6 @@ def _empty_frame() -> pd.DataFrame:
     return pd.DataFrame(columns=["code", "rate", "description", "quantity"])
 
 
-def _workbook_sheet_names(source: Path) -> set[str]:
-    try:
-        if source.suffix.lower() == ".xlsx":
-            return set(pd.ExcelFile(source, engine="openpyxl").sheet_names)
-        if source.suffix.lower() == ".json":
-            payload = json.loads(source.read_text(encoding="utf-8"))
-            return set(payload.get("sheets", {}))
-    except (OSError, ValueError, json.JSONDecodeError, ImportError):
-        return set()
-    return set()
-
-
-def _is_structured_chargemaster(source: Path) -> bool:
-    sheets = _workbook_sheet_names(source)
-    return {"OPD Charges", "IPD Charges", "CDM Master"}.issubset(sheets)
-
-
-def _read_structured_sheet(source: Path, sheet_name: str) -> pd.DataFrame:
-    if source.suffix.lower() == ".xlsx":
-        return pd.read_excel(source, sheet_name=sheet_name, header=3, dtype=str, keep_default_na=False, engine="openpyxl")
-
-    payload = json.loads(source.read_text(encoding="utf-8"))
-    sheet = payload.get("sheets", {}).get(sheet_name, {})
-    rows = sheet.get("rows", [])
-    if rows and len(rows) > 3 and rows[3]:
-        headers = [str(value).strip() if value is not None else f"Column_{index + 1}" for index, value in enumerate(rows[3])]
-        return pd.DataFrame(rows[4:], columns=headers, dtype=str).fillna("")
-    headers = sheet.get("headers", [])
-    records = sheet.get("records", [])
-    return pd.DataFrame(records, columns=headers or None, dtype=str).fillna("")
-
-
 def _configured_path(path: str | Path | None = None) -> Path | None:
     if path is None:
         load_dotenv(PROJECT_ROOT / ".env")
@@ -114,13 +81,7 @@ def _configured_path(path: str | Path | None = None) -> Path | None:
             if not configured:
                 return None
         else:
-            athena_xlsx = PROJECT_ROOT / "Hospital_IPD_OPD_Charges_Athena_Care_Gap.xlsx"
-            athena_json = PROJECT_ROOT / "Hospital_IPD_OPD_Charges_Athena_Care_Gap.json"
-            legacy_xlsx = PROJECT_ROOT / "Original_Hospital_IPD_OPD_Charges_200_Demo.xlsx"
-            configured = next(
-                (candidate.name for candidate in (athena_xlsx, athena_json, legacy_xlsx) if candidate.is_file()),
-                athena_xlsx.name,
-            )
+            configured = "Original_Hospital_IPD_OPD_Charges_200_Demo.xlsx"
     else:
         configured = str(path).strip()
     if not configured:
@@ -139,7 +100,7 @@ def load_chargemaster(path: str | Path | None = None) -> tuple[pd.DataFrame, str
         return _empty_frame(), "Chargemaster unavailable"
 
     suffix = source.suffix.lower()
-    if suffix not in {".csv", ".xlsx", ".json"}:
+    if suffix not in {".csv", ".xlsx"}:
         return _empty_frame(), "Unsupported format"
     if not source.is_file():
         return _empty_frame(), "Chargemaster unavailable"
@@ -147,14 +108,12 @@ def load_chargemaster(path: str | Path | None = None) -> tuple[pd.DataFrame, str
     try:
         if suffix == ".csv":
             frame = pd.read_csv(source, dtype=str, keep_default_na=False)
-        elif _is_structured_chargemaster(source):
+        elif source.name == "Original_Hospital_IPD_OPD_Charges_200_Demo.xlsx":
             encounter_type = (os.getenv("NUUCARE_ENCOUNTER_TYPE") or "OPD").strip().upper()
             sheet_name = "IPD Charges" if encounter_type in {"IPD", "INPATIENT"} else "OPD Charges"
-            frame = _read_structured_sheet(source, sheet_name)
-        elif suffix == ".xlsx":
-            frame = pd.read_excel(source, dtype=str, keep_default_na=False, engine="openpyxl")
+            frame = pd.read_excel(source, sheet_name=sheet_name, header=3, dtype=str, keep_default_na=False, engine="openpyxl")
         else:
-            return _empty_frame(), "Unsupported format"
+            frame = pd.read_excel(source, dtype=str, keep_default_na=False, engine="openpyxl")
     except Exception:
         return _empty_frame(), "Chargemaster unavailable"
 
@@ -186,8 +145,8 @@ def _decimal_or_none(value: Any) -> Decimal | None:
 def _active_cdm_codes(source: Path) -> tuple[set[str], set[str]]:
     """Return currently active codes and codes present in CDM, using CDM as a gate when available."""
     try:
-        cdm = _read_structured_sheet(source, "CDM Master")
-    except (OSError, ValueError, KeyError, json.JSONDecodeError, ImportError):
+        cdm = pd.read_excel(source, sheet_name="CDM Master", header=3, dtype=str, keep_default_na=False, engine="openpyxl")
+    except Exception:
         return set(), set()
     code_column = _find_column(cdm, {"cpthcpcs", "cpthcpcscode"})
     status_column = _find_column(cdm, {"status"})
@@ -227,12 +186,12 @@ def price_cpt_bill_lines(
     load_status = "Chargemaster unavailable"
     active_cdm: set[str] = set()
     known_cdm: set[str] = set()
-    if source is not None and source.is_file() and _is_structured_chargemaster(source):
+    if source is not None and source.is_file() and source.suffix.lower() == ".xlsx" and source.name == "Original_Hospital_IPD_OPD_Charges_200_Demo.xlsx":
         try:
-            frame = _read_structured_sheet(source, source_sheet)
+            frame = pd.read_excel(source, sheet_name=source_sheet, header=3, dtype=str, keep_default_na=False, engine="openpyxl")
             load_status = "Found"
             active_cdm, known_cdm = _active_cdm_codes(source)
-        except (OSError, ValueError, KeyError, json.JSONDecodeError, ImportError):
+        except Exception:
             load_status = "Chargemaster unavailable"
     elif source is not None and source.is_file():
         frame, load_status = load_chargemaster(source)

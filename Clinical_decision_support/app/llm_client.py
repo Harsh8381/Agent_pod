@@ -97,13 +97,18 @@ def call_llm(prompt, system_prompt=None, temperature=0.3):
 
 
 def call_llm_for_cpt(prompt, system_prompt=None, temperature=0.3):
-    """Call the dedicated CPT generation LLM configuration if provided."""
+    """Call the dedicated CPT generation LLM configuration if provided.
+
+    The CPT override swaps the API key and endpoint, but keeps the standard model
+    selection unless no general model is configured.
+    """
+    model = COFORGE_MODEL or COFORGE_CPT_MODEL
     return _call_llm_with_config(
         prompt,
         system_prompt=system_prompt,
         temperature=temperature,
         api_key=COFORGE_CPT_API_KEY,
         api_url=COFORGE_CPT_API_URL,
-        model=COFORGE_CPT_MODEL,
+        model=model,
         key_name="COFORGE_CPT_API_KEY",
     )

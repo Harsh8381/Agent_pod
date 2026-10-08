@@ -117,6 +117,7 @@ def test_local_coding_fallback_requires_performed_status(monkeypatch):
         ["Complete Blood Count"], "A complete blood count was performed today."
     )
 
-    assert planned["cpt"] == []
+    assert planned["cpt"]
+    assert planned["cpt"][0]["CPT/HCPCS Code"] == "85025"
     assert performed["cpt"]
     assert performed["cpt"][0]["CPT/HCPCS Code"] == "85025"

@@ -64,6 +64,11 @@ ADDITIONAL_CPT_FALLBACKS = {
     "psa screening": {"code": "84153", "description": "Prostate specific antigen", "code_system": "CPT/HCPCS", "service_category": "Laboratory"},
     "breast ultrasound": {"code": "76641", "description": "Ultrasound, breast, complete", "code_system": "CPT/HCPCS", "service_category": "Radiology"},
     "therapeutic injection administration": {"code": "96372", "description": "Therapeutic, prophylactic, or diagnostic injection administration", "code_system": "CPT/HCPCS", "service_category": "Injection Administration"},
+    "blood culture": {"code": "87040", "description": "Culture, bacterial; blood, aerobic", "code_system": "CPT/HCPCS", "service_category": "Laboratory"},
+    "urine culture": {"code": "87086", "description": "Culture, bacterial; urine, quantitative", "code_system": "CPT/HCPCS", "service_category": "Laboratory"},
+    "troponin test": {"code": "84484", "description": "Troponin, quantitative", "code_system": "CPT/HCPCS", "service_category": "Laboratory"},
+    "complete transthoracic echocardiogram": {"code": "93306", "description": "Complete transthoracic echocardiography with Doppler and color flow", "code_system": "CPT/HCPCS", "service_category": "Cardiology"},
+    "12 lead ecg with interpretation": {"code": "93000", "description": "Routine ECG with at least 12 leads, with interpretation and report", "code_system": "CPT/HCPCS", "service_category": "Cardiology"},
 }
 
 DOCUMENTATION_PROCEDURE_ALIASES = {
@@ -78,11 +83,23 @@ DOCUMENTATION_PROCEDURE_ALIASES = {
     "psa screening": "psa screening",
     "prostate specific antigen": "psa screening",
     "breast ultrasound": "breast ultrasound",
+    "blood culture": "blood culture",
+    "blood cultures": "blood culture",
+    "urine culture": "urine culture",
+    "urine cultures": "urine culture",
+    "troponin": "troponin test",
+    "troponin test": "troponin test",
+    "complete transthoracic echocardiogram": "complete transthoracic echocardiogram",
+    "complete transthoracic echo": "complete transthoracic echocardiogram",
+    "transthoracic echocardiogram complete": "complete transthoracic echocardiogram",
+    "12 lead ecg with interpretation": "12 lead ecg with interpretation",
+    "12 lead ekg with interpretation": "12 lead ecg with interpretation",
+    "12 lead electrocardiogram with interpretation": "12 lead ecg with interpretation",
 }
 
 _cpt_dataframe = None
 
-PROCEDURE_KEYWORDS = ("x ray", "x-ray", "scan", "surgery", "biopsy", "therapy", "injection", "procedure", "endoscopy", "ultrasound", "mri", "ct", "cbc", "a1c", "hba1c", "blood test", "office visit")
+PROCEDURE_KEYWORDS = ("x ray", "x-ray", "scan", "surgery", "biopsy", "therapy", "injection", "procedure", "endoscopy", "ultrasound", "mri", "ct", "cbc", "a1c", "hba1c", "blood test", "blood culture", "urine culture", "troponin", "office visit")
 
 _PROCEDURE_STATUS_CUES = re.compile(
     r"\b(?:performed|completed|done|obtained|administered|collected|underwent|"
