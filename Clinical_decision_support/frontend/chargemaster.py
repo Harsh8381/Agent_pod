@@ -38,6 +38,9 @@ _DESCRIPTION_ALIASES = {
     "description",
     "servicedescription",
 }
+_REVENUE_CODE_ALIASES = {"revenuecode"}
+_DEPARTMENT_ALIASES = {"department", "servicedepartment"}
+_CATEGORY_ALIASES = {"category", "servicecategory", "chargetype", "servicearea"}
 _QUANTITY_ALIASES = {"quantity", "units", "quantityunits"}
 _RESULT_FIELDS = (
     "Date",
@@ -68,6 +71,112 @@ def _find_column(frame: pd.DataFrame, aliases: set[str]) -> Any | None:
         (column for column in frame.columns if _normalize_header(column) in aliases),
         None,
     )
+
+
+def _revenue_code(value: Any) -> str:
+    text = _clean_cell(value)
+    match = re.fullmatch(r"(\d+)(?:\.0+)?", text)
+    if not match:
+        return ""
+    digits = match.group(1)
+    return digits.zfill(4) if 1 <= len(digits) <= 4 else ""
+
+
+def _mapping_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", _clean_cell(value).casefold())
+
+
+def _revenue_frames(source: Path, encounter_type: str) -> list[pd.DataFrame]:
+    if _is_structured_chargemaster(source):
+        frames = []
+        for sheet_name in (_encounter_sheet(encounter_type), "CDM Master"):
+            try:
+                frame = _read_structured_sheet(source, sheet_name)
+            except (OSError, ValueError, KeyError, json.JSONDecodeError, ImportError):
+                continue
+            frames.append(frame)
+        return frames
+    try:
+        if source.suffix.lower() == ".csv":
+            return [pd.read_csv(source, dtype=str, keep_default_na=False)]
+        if source.suffix.lower() == ".xlsx":
+            return [pd.read_excel(source, dtype=str, keep_default_na=False, engine="openpyxl")]
+        if source.suffix.lower() == ".json":
+            payload = json.loads(source.read_text(encoding="utf-8"))
+            frames = []
+            for sheet in payload.get("sheets", {}).values():
+                rows = sheet.get("rows", [])
+                if rows and len(rows) > 3 and rows[3]:
+                    headers = [
+                        str(value).strip() if value is not None else f"Column_{index + 1}"
+                        for index, value in enumerate(rows[3])
+                    ]
+                    frames.append(pd.DataFrame(rows[4:], columns=headers, dtype=str).fillna(""))
+                elif sheet.get("records"):
+                    frames.append(pd.DataFrame(sheet["records"], dtype=str).fillna(""))
+            return frames
+    except (OSError, ValueError, json.JSONDecodeError, ImportError):
+        return []
+    return []
+
+
+def _unique_revenue_code(
+    frames: list[pd.DataFrame],
+    aliases: set[str],
+    key: Any,
+) -> str:
+    normalized_key = _mapping_key(key)
+    if not normalized_key:
+        return ""
+    for frame in frames:
+        key_column = _find_column(frame, aliases)
+        revenue_column = _find_column(frame, _REVENUE_CODE_ALIASES)
+        if key_column is None or revenue_column is None:
+            continue
+        matches = frame[frame[key_column].map(_mapping_key) == normalized_key]
+        codes = {
+            code for code in matches[revenue_column].map(_revenue_code)
+            if code
+        }
+        if len(codes) == 1:
+            return next(iter(codes))
+    return ""
+
+
+def assign_revenue_codes(bill: dict[str, Any]) -> list[str]:
+    """Populate 837I revenue codes in-place and return unresolved service lines."""
+    lines = bill.get("lines")
+    if not isinstance(lines, list):
+        return []
+    source = _configured_path()
+    if source is None or not source.is_file():
+        frames = []
+    else:
+        frames = _revenue_frames(source, str(bill.get("encounter_type") or "OPD"))
+
+    unresolved = []
+    for index, line in enumerate(lines, start=1):
+        if not isinstance(line, dict):
+            continue
+        line["Revenue Code"] = _revenue_code(line.get("Revenue Code"))
+        if not line["Revenue Code"]:
+            lookup_order = (
+                ({"cpthcpcscode", "cpthcpcs", "cptcode", "hcpcscode", "procedurecode", "code"},
+                 line.get("CPT / HCPCS")),
+                (_DEPARTMENT_ALIASES, line.get("Department") or line.get("Service Department")),
+                (_CATEGORY_ALIASES, line.get("Service Category") or line.get("Category")),
+                (_DESCRIPTION_ALIASES, line.get("Service Description") or line.get("Description")),
+            )
+            for aliases, value in lookup_order:
+                code = _unique_revenue_code(frames, aliases, value)
+                if code:
+                    line["Revenue Code"] = code
+                    break
+        if not line["Revenue Code"]:
+            line["Revenue Code"] = "REVIEW_REQUIRED"
+            cpt_code = _clean_cell(line.get("CPT / HCPCS")) or "not provided"
+            unresolved.append(f"Service line {index} (CPT/HCPCS {cpt_code})")
+    return unresolved
 
 
 def _empty_frame() -> pd.DataFrame:
