@@ -11,11 +11,9 @@ import streamlit as st
 from openpyxl import load_workbook
 
 try:
-    from frontend.claim_generator import generate_837
-    from frontend.claim_validator import validate_bill
+    from frontend.claim_generation_page import register_generated_bill
 except ModuleNotFoundError:
-    from claim_generator import generate_837
-    from claim_validator import validate_bill
+    from claim_generation_page import register_generated_bill
 
 
 DEFAULT_WORKBOOK = Path(__file__).resolve().parents[2] / "IPD_25_Patient_Billing_Demo.xlsx"
@@ -451,7 +449,7 @@ def show_ipd_billing(render_sidebar, render_header, workbook_path=DEFAULT_WORKBO
             "payer_amount": payer_amount,
             "patient_amount": patient_amount,
         }
-        st.session_state.pop("ipd_generated_claim", None)
+        register_generated_bill(st.session_state.ipd_generated_bill, source="IPD")
 
     generated = st.session_state.get("ipd_generated_bill")
     if generated and generated.get("encounter_id") == selected_id:
@@ -478,45 +476,4 @@ def show_ipd_billing(render_sidebar, render_header, workbook_path=DEFAULT_WORKBO
                 file_name=f"IPD_Bill_{patient_slug}_{selected_id}.pdf",
                 mime="application/pdf",
                 key="ipd_bill_pdf",
-            )
-
-        st.subheader("Claim Generation")
-        st.caption("Basic X12 draft; verify payer- and provider-specific identifiers before submission.")
-        institutional_column, professional_column = st.columns(2)
-        with institutional_column:
-            generate_institutional = st.button("Generate 837I", key="ipd_generate_837i")
-        with professional_column:
-            generate_professional = st.button("Generate 837P", key="ipd_generate_837p")
-
-        for clicked, claim_type in (
-            (generate_institutional, "837I"),
-            (generate_professional, "837P"),
-        ):
-            if clicked:
-                claim_issues = validate_bill(generated, claim_type)
-                if claim_issues:
-                    st.error(f"{claim_type} claim was not generated: " + " ".join(claim_issues))
-                    st.session_state.pop("ipd_generated_claim", None)
-                else:
-                    try:
-                        edi_text = generate_837(generated, claim_type)
-                    except (KeyError, ValueError, ArithmeticError) as error:
-                        st.error(f"{claim_type} claim generation failed: {error}")
-                        st.session_state.pop("ipd_generated_claim", None)
-                    else:
-                        st.session_state.ipd_generated_claim = {
-                            "encounter_id": selected_id,
-                            "claim_type": claim_type,
-                            "edi_text": edi_text,
-                            "patient_slug": patient_slug,
-                        }
-
-        claim = st.session_state.get("ipd_generated_claim")
-        if claim and claim.get("encounter_id") == selected_id:
-            st.download_button(
-                f"Download {claim['claim_type']} claim (.edi)",
-                data=claim["edi_text"],
-                file_name=f"{claim['claim_type']}_{claim['patient_slug']}_{selected_id}.edi",
-                mime="text/plain",
-                key=f"ipd_download_{claim['claim_type']}",
             )

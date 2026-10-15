@@ -6,7 +6,6 @@ import re
 import sys
 import uuid
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from html import escape, unescape
 from pathlib import Path
 
@@ -26,11 +25,17 @@ except ModuleNotFoundError:
     from ipd_billing import show_ipd_billing
 
 try:
-    from frontend.claim_generator import generate_837
-    from frontend.claim_validator import validate_bill
+    from frontend.claim_generation_page import (
+        build_ambient_bill,
+        register_generated_bill,
+        show_claim_generation_page,
+    )
 except ModuleNotFoundError:
-    from claim_generator import generate_837
-    from claim_validator import validate_bill
+    from claim_generation_page import (
+        build_ambient_bill,
+        register_generated_bill,
+        show_claim_generation_page,
+    )
 
 try:
     from frontend.admin_console import show_admin_dashboard, show_super_admin
@@ -799,6 +804,7 @@ def render_sidebar(active_page):
             ("new_consult", "Consultations"),
             ("ehr_data", "EHR Demo Data"),
             ("ipd_billing", "IPD Billing"),
+            ("claim_generation", "Claim Generation"),
             ("review", "Clinical Review"),
             ("codes", "Codes"),
         ]
@@ -1873,7 +1879,12 @@ def show_codes():
             "total": estimated_total,
             "unpriced_codes": unpriced_codes,
         }
-        st.session_state.pop("ambient_generated_claim", None)
+        ambient_bill = build_ambient_bill(
+            record,
+            st.session_state.estimated_hospital_bill,
+            code_results,
+        )
+        register_generated_bill(ambient_bill, source=encounter_type)
 
     estimate = st.session_state.get("estimated_hospital_bill")
     if (
@@ -1890,137 +1901,6 @@ def show_codes():
         if estimate["unpriced_codes"]:
             st.warning("Unpriced codes: " + ", ".join(estimate["unpriced_codes"]))
         st.metric("Total Estimated Bill", f"${estimate['total']:,.2f}", border=True)
-        st.subheader("Claim Generation")
-        st.caption("Draft claims require a payer name, supported diagnosis codes, and fully priced service lines.")
-        try:
-            ehr_export = HealthcareApiClient().export_patient_data()
-            insurance_sheet = ehr_export.get("sheets", {}).get("Insurance", {})
-            insurance_records = insurance_sheet.get("records", [])
-            if not isinstance(insurance_records, list):
-                raise ValueError("The EHR Insurance records are not in the expected format.")
-            payer_options = sorted({
-                str(item.get("Payer_Name") or item.get("Payer") or "").strip()
-                for item in insurance_records
-                if isinstance(item, dict) and str(item.get("Payer_Name") or item.get("Payer") or "").strip()
-            })
-        except (RuntimeError, requests.exceptions.RequestException, OSError, ValueError) as error:
-            payer_options = []
-            st.error(f"Payers could not be loaded from the EHR database: {error}")
-        if payer_options:
-            preferred_payer = str(record.get("payer") or record.get("insurance") or "")
-            payer_index = payer_options.index(preferred_payer) if preferred_payer in payer_options else None
-            payer_name = st.selectbox(
-                "Payer / insurance plan",
-                payer_options,
-                index=payer_index,
-                placeholder="Select a payer",
-                key=f"ambient_claim_payer_{record.get('id')}",
-            )
-        else:
-            payer_name = None
-            st.warning("No payer names are available in the EHR database.")
-        claim_columns = st.columns(2)
-        generate_institutional = claim_columns[0].button(
-            "Generate 837I",
-            key=f"ambient_generate_837i_{record.get('id')}",
-            disabled=not payer_name,
-        )
-        generate_professional = claim_columns[1].button(
-            "Generate 837P",
-            key=f"ambient_generate_837p_{record.get('id')}",
-            disabled=not payer_name,
-        )
-        for clicked, claim_type in (
-            (generate_institutional, "837I"),
-            (generate_professional, "837P"),
-        ):
-            if not clicked:
-                continue
-            if estimate["unpriced_codes"]:
-                st.error(
-                    "Claim was not generated because the bill contains unpriced service codes: "
-                    + ", ".join(estimate["unpriced_codes"])
-                )
-                st.session_state.pop("ambient_generated_claim", None)
-                continue
-
-            try:
-                service_date = datetime.strptime(record.get("date", ""), "%d/%m/%Y").date().isoformat()
-            except (TypeError, ValueError):
-                service_date = str(record.get("date", ""))
-            diagnosis_codes = [
-                str(item.get("ICD-10 Code") or "").strip()
-                for item in code_results.get("icd10", [])
-                if str(item.get("ICD-10 Code") or "").strip()
-            ]
-            claim_lines = []
-            for row in estimate["rows"]:
-                amount_text = str(row.get("Gross Charge") or "").replace("$", "").replace(",", "").strip()
-                try:
-                    line_amount = Decimal(amount_text)
-                except (InvalidOperation, ValueError):
-                    line_amount = None
-                claim_lines.append({
-                    "Service Date": service_date,
-                    "CPT / HCPCS": row.get("CPT/HCPCS Code", ""),
-                    "Revenue Code": row.get("Revenue Code", ""),
-                    "Department": row.get("Department", ""),
-                    "Service Category": row.get("Service Category", ""),
-                    "Service Description": row.get("Service Description", ""),
-                    "Quantity": row.get("Quantity"),
-                    "Line Charge ($)": line_amount,
-                })
-            ambient_bill = {
-                "encounter_id": record.get("ehr_encounter_id") or record.get("id"),
-                "encounter_type": encounter_type,
-                "patient": {
-                    "Patient ID": record.get("ehr_patient_id") or record.get("id"),
-                    "Patient Name": record.get("name"),
-                    "Payer": payer_name,
-                    "Admission Date": service_date,
-                    "Discharge Date": service_date,
-                    "Primary ICD-10-CM": diagnosis_codes[0] if diagnosis_codes else "",
-                    "Secondary ICD-10-CM": ";".join(diagnosis_codes[1:]),
-                },
-                "lines": claim_lines,
-                "gross": Decimal(str(estimate["total"])).quantize(Decimal("0.01")),
-            }
-            claim_issues = validate_bill(ambient_bill, claim_type)
-            if claim_issues:
-                st.error(f"{claim_type} claim was not generated: " + " ".join(claim_issues))
-                st.session_state.pop("ambient_generated_claim", None)
-                continue
-            try:
-                edi_text = generate_837(ambient_bill, claim_type)
-            except (KeyError, ValueError, ArithmeticError) as error:
-                st.error(f"{claim_type} claim generation failed: {error}")
-                st.session_state.pop("ambient_generated_claim", None)
-                continue
-            st.session_state.ambient_generated_claim = {
-                "record_id": record.get("id"),
-                "estimate_signature": current_signature,
-                "payer": payer_name,
-                "claim_type": claim_type,
-                "edi_text": edi_text,
-            }
-
-        claim = st.session_state.get("ambient_generated_claim")
-        if (
-            claim
-            and claim.get("record_id") == record.get("id")
-            and claim.get("estimate_signature") == current_signature
-            and claim.get("payer") == payer_name
-        ):
-            patient_slug = re.sub(
-                r"[^A-Za-z0-9_-]+", "_", str(record.get("name") or "patient")
-            ).strip("_") or "patient"
-            st.download_button(
-                f"Download {claim['claim_type']} claim (.edi)",
-                data=claim["edi_text"],
-                file_name=f"{claim['claim_type']}_{patient_slug}_{record.get('id')}.edi",
-                mime="text/plain",
-                key=f"ambient_download_{claim['claim_type']}_{record.get('id')}",
-            )
     st.caption("Estimated gross chargemaster charges only. This is not a finalized claim, payer-allowed amount, or patient responsibility amount.")
 
     icd_tab, cpt_tab = st.tabs(["ICD-10 Diagnosis Codes", "CPT/HCPCS Procedure Codes"])
@@ -2047,6 +1927,8 @@ elif st.session_state.page == "ehr_data":
     show_ehr_demo_data()
 elif st.session_state.page == "ipd_billing":
     show_ipd_billing(render_sidebar, render_header)
+elif st.session_state.page == "claim_generation":
+    show_claim_generation_page(render_sidebar, render_header)
 elif st.session_state.page == "admin_dashboard":
     show_admin_dashboard(
         st.session_state.records,

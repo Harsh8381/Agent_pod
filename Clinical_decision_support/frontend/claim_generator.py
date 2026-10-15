@@ -53,9 +53,31 @@ def _append_diagnoses(segments, patient):
         segments.append(f"HI*{qualifier}:{_element(code)}~")
 
 
-def generate_837(bill, claim_type):
-    if claim_type not in {"837I", "837P"}:
-        raise ValueError("Claim type must be 837I or 837P.")
+def determine_encounter_type(bill, source=""):
+    encounter_type = _text(bill.get("encounter_type") or source).casefold()
+    encounter_type = re.sub(r"[^a-z0-9]+", " ", encounter_type).strip()
+    markers = set(encounter_type.split())
+
+    if markers.intersection({"ipd", "inpatient", "hospital"}) or "hospital stay" in encounter_type:
+        return "IPD"
+    if markers.intersection({"opd", "outpatient", "professional", "clinic"}) or "clinic visit" in encounter_type:
+        return "OPD"
+    raise ValueError(f"Unsupported encounter type for claim generation: {encounter_type or 'missing'}.")
+
+
+def determine_claim_type(bill, source=""):
+    return "837I" if determine_encounter_type(bill, source) == "IPD" else "837P"
+
+
+def generate_837(bill, claim_type=None, source=""):
+    expected_claim_type = determine_claim_type(bill, source)
+    if claim_type is not None and claim_type != expected_claim_type:
+        encounter_type = determine_encounter_type(bill, source)
+        raise ValueError(
+            f"Encounter type {encounter_type} requires {expected_claim_type}; "
+            f"cannot generate {claim_type}."
+        )
+    claim_type = expected_claim_type
     if claim_type == "837I":
         unresolved = assign_revenue_codes(bill)
         if unresolved:

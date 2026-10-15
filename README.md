@@ -133,8 +133,9 @@ Layer responsibilities:
 │   │   ├── streamlit_app.py        # canonical frontend entry point
 │   │   ├── api_client.py           # Streamlit-to-FastAPI client
 │   │   ├── chargemaster.py         # CPT pricing and revenue-code mapping
-│   │   ├── claim_generator.py      # draft 837I/837P EDI text
+│   │   ├── claim_generator.py      # low-level 837I/837P EDI formatter
 │   │   ├── claim_validator.py      # claim field and total checks
+│   │   ├── claim_generation_page.py # separate bill-to-claim workspace
 │   │   └── ipd_billing.py          # inpatient bill and PDF workflow
 │   ├── knowledge_base/
 │   │   └── knowledge_base_harrison.docx
@@ -462,6 +463,7 @@ Response:
 - **Codes:** review ICD-10-CM and CPT/HCPCS suggestions derived from the encounter and documentation.
 - **EHR demo data:** browse synthetic patients, charts, and workbook-shaped records exposed by the local API.
 - **IPD billing:** choose an inpatient encounter from the billing workbook, inspect charge lines and validation messages, generate a bill, and download a PDF.
+- **Claim Generation:** a separate sidebar page for selecting a patient and generated encounter bill, reviewing its patient/coding/charge details, creating a draft claim record, and downloading it as JSON or text.
 - **Admin:** view the admin dashboard and edit demo roles and permission settings. These are UI prototypes, not security controls.
 - **Persistence:** local encounter drafts and finalization use `clinical_records.json`; the EHR API initializes a workbook-shaped JSON store from the synthetic EHR workbook when needed.
 
@@ -469,18 +471,17 @@ Response:
 
 ### Clinical Coding, Billing, and Claims (POC)
 
-The **Codes** page supplies a consultation-based outpatient estimate and a basic draft-claim flow:
+The **Codes** page supplies consultation-based estimates and bill generation:
 
 1. Choose the consultation and whether the estimate uses the OPD or IPD chargemaster sheet.
 2. Select the CPT/HCPCS candidates to include; all candidates are selected initially. **Calculate Bill** uses the selected codes, their quantities, and matching chargemaster rates. Unmatched or ambiguous rates remain unpriced and are called out; they are not fabricated.
-3. Choose a payer from the synthetic EHR `Insurance` records. Claim generation is disabled until a payer is selected.
-4. **Generate 837P** uses CPT/HCPCS procedure codes in `SV1` lines. **Generate 837I** uses `SV2` lines and requires a revenue code for each line.
-5. For an 837I draft, the chargemaster mapper tries the line's existing revenue code, CPT/HCPCS mapping, department, category, then service description. Four-digit codes retain leading zeros. A service without a reliable mapping is marked `REVIEW_REQUIRED`; the warning identifies the service and CPT/HCPCS code.
-6. Both claim types validate required patient/payer/diagnosis/date/service data and ensure service-line charges sum to the bill total. Successful output is downloadable as a plain-text `.edi` file.
+3. The generated estimate is made available to the separate **Claim Generation** workspace; Codes does not generate claims.
 
-The **IPD billing** page is a separate workbook-backed flow. It checks encounter identifiers, dates, code references, charge-line arithmetic, duplicate lines, and encounter totals before showing gross charges and estimated payer/patient shares. Its share percentages come from the synthetic workbook.
+The **IPD Billing** page is a separate workbook-backed workflow. It checks encounter identifiers, dates, code references, charge-line arithmetic, duplicate lines, and encounter totals before generating and displaying the bill and its estimated payer/patient shares. Its share percentages come from the synthetic workbook. It does not generate claims.
 
-These estimates and EDI files are demonstrations only. EDI output uses placeholder provider/submitter identifiers and is not a complete, payer-specific or production-ready X12 submission. It must be reviewed by qualified billing staff and must not be submitted as-is. The estimate is gross chargemaster charges, not a negotiated allowance, benefits determination, or finalized patient responsibility. Coding suggestions also require professional review.
+The **Claim Generation** page lists generated bills in the current Streamlit session, lets the user select a patient and encounter, and displays patient details, available ICD-10 and CPT/HCPCS codes, charge lines, and total bill amount. **Generate Claim** creates a simple record with a generated Claim ID, Encounter ID, automatically determined claim type (`837P` for OPD/professional; `837I` for IPD/hospital), draft status, total, and bill details. The summary table and JSON/TXT downloads are for POC review and are not standards-compliant X12 claim files or payer submissions.
+
+Estimates and claim records are demonstrations only. Gross chargemaster charges are not a negotiated allowance, benefits determination, or finalized patient responsibility. Coding suggestions require professional review.
 
 ## 13. Persistence and Runtime Files
 
@@ -634,7 +635,9 @@ Keep Coforge request formatting in `app/llm_client.py`. Never put credentials in
 - Word citations use blocks/headings rather than reliable printed page numbers.
 - The rule engine is not integrated into active CDS.
 - Admin roles and permissions are in-memory UI demo state; they do not enforce authorization.
-- The claim generator creates basic 837I/837P drafts with placeholder identifiers; it is not a complete X12 implementation or submission service.
+- The current Claim Generation page exports JSON/TXT records, not X12 EDI. The separate low-level EDI formatter is not exposed by this page and is not a complete X12 implementation or submission service.
+- Claim records are held in Streamlit session state and are not persisted as a durable billing or claims ledger.
+- The Claim Generation page exports a POC JSON/TXT summary, not X12 EDI.
 - Chargemaster coverage varies by encounter type and code; an unpriced line blocks claim generation until resolved.
 - Retrieval tests do not establish clinical retrieval quality.
 - The builder resets the collection instead of using versioned or incremental swaps.
