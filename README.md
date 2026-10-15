@@ -19,6 +19,7 @@ This is an educational prototype. It is not a medical device and must not replac
 - [10. Knowledge Base and RAG](#10-knowledge-base-and-rag)
 - [11. API Reference](#11-api-reference)
 - [12. Frontend Workflow](#12-frontend-workflow)
+- [Clinical Coding, Billing, and Claims](#clinical-coding-billing-and-claims-poc)
 - [13. Persistence and Runtime Files](#13-persistence-and-runtime-files)
 - [14. Testing](#14-testing)
 - [15. Troubleshooting](#15-troubleshooting)
@@ -130,12 +131,19 @@ Layer responsibilities:
 │   │   └── tests/
 │   ├── frontend/
 │   │   ├── streamlit_app.py        # canonical frontend entry point
-│   │   └── api_client.py
+│   │   ├── api_client.py           # Streamlit-to-FastAPI client
+│   │   ├── chargemaster.py         # CPT pricing and revenue-code mapping
+│   │   ├── claim_generator.py      # low-level 837I/837P EDI formatter
+│   │   ├── claim_validator.py      # claim field and total checks
+│   │   ├── claim_generation_page.py # separate bill-to-claim workspace
+│   │   └── ipd_billing.py          # inpatient bill and PDF workflow
 │   ├── knowledge_base/
 │   │   └── knowledge_base_harrison.docx
 │   ├── chroma_db/                  # generated ignored artifacts
 │   ├── requirements.txt
-│   └── clinical_records.json       # local runtime/sample data
+│   ├── Hospital_IPD_OPD_Charges_Athena_Care_Gap.xlsx
+│   ├── Epic_Inspired_USA_50_Patient_Demo.xlsx
+│   └── clinical_records.json       # local runtime data; ignored
 └── Clinical_decision_support/Agent-pod/ # nested alternate copy
 ```
 
@@ -205,6 +213,17 @@ MAX_CONTEXT_CHARS=12000
 | `MAX_CONTEXT_CHARS` | Maximum retrieved text sent to LLM | `12000` |
 
 `auto` attempts Sentence Transformers and falls back to sparse TF-IDF if model loading fails. `tfidf` avoids Hugging Face access entirely.
+
+The following optional variables customize the related coding and billing data:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `COFORGE_CPT_API_URL` | Optional endpoint for code-suggestion LLM calls | `COFORGE_API_URL` |
+| `COFORGE_CPT_API_KEY` | Optional key for code-suggestion LLM calls | `COFORGE_API_KEY` |
+| `COFORGE_CPT_MODEL` | Optional model for code-suggestion LLM calls | `COFORGE_MODEL` |
+| `CHARGEMASTER_PATH` | Explicit CSV, XLSX, or JSON chargemaster path | Athena Care Gap workbook, then its JSON and the legacy demo workbook |
+
+Keep local credentials in `Clinical_decision_support/.env`. Never paste a real key into Copilot Chat, commit it, or include it in logs.
 
 ## HCC Medical Coding
 
@@ -436,20 +455,42 @@ Response:
 `frontend/streamlit_app.py` provides:
 
 - **Dashboard:** local records, status, analytics, and record navigation.
-- **New Consultation:** patient metadata and browser audio capture.
+- **New Consultation:** select an existing synthetic EHR patient or enter patient metadata, choose encounter type, and record browser audio.
 - **Transcription:** `SpeechRecognition.recognize_google`.
-- **Scribe:** `/encounters/scribe` and summary/highlight display.
-- **CDS selection:** optional `/encounters/cds` call.
-- **Review:** recommendation, transcript, summary, and detected insights.
-- **Persistence:** draft save and finalization in `clinical_records.json`.
+- **Scribe:** `/encounters/scribe` generates a structured note and highlights.
+- **CDS:** `/encounters/cds` retrieves cited local knowledge-base context and requests recommendations.
+- **Review:** inspect the source transcript, regenerate SOAP or CDS, edit the summary, add supported manual insights, and save or finalize the note.
+- **Codes:** review ICD-10-CM and CPT/HCPCS suggestions derived from the encounter and documentation.
+- **EHR demo data:** browse synthetic patients, charts, and workbook-shaped records exposed by the local API.
+- **IPD billing:** choose an inpatient encounter from the billing workbook, inspect charge lines and validation messages, generate a bill, and download a PDF.
+- **Claim Generation:** a separate sidebar page for selecting a patient and generated encounter bill, reviewing its patient/coding/charge details, creating a draft claim record, and downloading it as JSON or text.
+- **Admin:** view the admin dashboard and edit demo roles and permission settings. These are UI prototypes, not security controls.
+- **Persistence:** local encounter drafts and finalization use `clinical_records.json`; the EHR API initializes a workbook-shaped JSON store from the synthetic EHR workbook when needed.
 
 `frontend/api_client.py` defaults to `http://127.0.0.1:8000` and uses a 180-second request timeout. The UI has no authentication or access control.
+
+### Clinical Coding, Billing, and Claims (POC)
+
+The **Codes** page supplies consultation-based estimates and bill generation:
+
+1. Choose the consultation and whether the estimate uses the OPD or IPD chargemaster sheet.
+2. Select the CPT/HCPCS candidates to include; all candidates are selected initially. **Calculate Bill** uses the selected codes, their quantities, and matching chargemaster rates. Unmatched or ambiguous rates remain unpriced and are called out; they are not fabricated.
+3. The generated estimate is made available to the separate **Claim Generation** workspace; Codes does not generate claims.
+
+The **IPD Billing** page is a separate workbook-backed workflow. It checks encounter identifiers, dates, code references, charge-line arithmetic, duplicate lines, and encounter totals before generating and displaying the bill and its estimated payer/patient shares. Its share percentages come from the synthetic workbook. It does not generate claims.
+
+The **Claim Generation** page lists generated bills in the current Streamlit session, lets the user select a patient and encounter, and displays patient details, available ICD-10 and CPT/HCPCS codes, charge lines, and total bill amount. **Generate Claim** creates a simple record with a generated Claim ID, Encounter ID, automatically determined claim type (`837P` for OPD/professional; `837I` for IPD/hospital), draft status, total, and bill details. The summary table and JSON/TXT downloads are for POC review and are not standards-compliant X12 claim files or payer submissions.
+
+Estimates and claim records are demonstrations only. Gross chargemaster charges are not a negotiated allowance, benefits determination, or finalized patient responsibility. Coding suggestions require professional review.
 
 ## 13. Persistence and Runtime Files
 
 | Path | Purpose | Git status |
 | --- | --- | --- |
-| `clinical_records.json` | Frontend-local encounter records | Ignored |
+| `clinical_records.json` | Frontend-local consultation records | Ignored |
+| `Epic_Inspired_USA_50_Patient_Demo_Athena_Care_Gap.json` | Workbook-shaped local EHR demo store, initialized from the synthetic workbook | Local runtime store |
+| `Hospital_IPD_OPD_Charges_Athena_Care_Gap.xlsx` | Default OPD/IPD chargemaster and revenue-code reference | Source workbook |
+| `IPD_25_Patient_Billing_Demo.xlsx` | Synthetic encounters and charges for IPD billing | Source workbook |
 | `chroma_db/` | Generated retrieval artifacts | Ignored |
 | `logs/` | Runtime logs if used | Ignored |
 | `uploads/` | Runtime uploads if used | Ignored |
@@ -474,9 +515,15 @@ Linux/macOS:
 ../.venv/bin/python -m pytest app/tests -q
 ```
 
-The suite covers health, mocked retrieval and analysis routes, validation, encounter orchestration mocking, ambient-scribe JSON parsing, clinical-service parsing, Word extraction, metadata, duplicate filtering, and Streamlit insight insertion.
+The suite covers API health and mocked encounter flows, retrieval and Word loading, coding guardrails, CPT selection and procedure status, chargemaster pricing and revenue mapping, IPD billing, EHR JSON persistence, transcript audit behavior, and admin helpers.
 
-It does not currently verify real Coforge calls, real Chroma persistence, full rebuilds, Sentence Transformer fallback, microphone recording, Google speech recognition, Streamlit integration, record persistence, or rule-engine integration.
+Run the focused workflow tests, for example:
+
+```powershell
+& "..\.venv\Scripts\python.exe" -m pytest app\tests\test_chargemaster.py app\tests\test_real_chargemaster.py app\tests\test_bill_cpt_selection.py app\tests\test_billing_scrubber.py -q
+```
+
+Automated tests do not verify real Coforge calls, microphone recording, Google speech recognition, browser interaction, or payer acceptance of draft EDI. Review the specific tests available in `app/tests/` before relying on a behavior.
 
 ## 15. Troubleshooting
 
@@ -587,6 +634,11 @@ Keep Coforge request formatting in `app/llm_client.py`. Never put credentials in
 - Automatic OCR is not implemented.
 - Word citations use blocks/headings rather than reliable printed page numbers.
 - The rule engine is not integrated into active CDS.
+- Admin roles and permissions are in-memory UI demo state; they do not enforce authorization.
+- The current Claim Generation page exports JSON/TXT records, not X12 EDI. The separate low-level EDI formatter is not exposed by this page and is not a complete X12 implementation or submission service.
+- Claim records are held in Streamlit session state and are not persisted as a durable billing or claims ledger.
+- The Claim Generation page exports a POC JSON/TXT summary, not X12 EDI.
+- Chargemaster coverage varies by encounter type and code; an unpriced line blocks claim generation until resolved.
 - Retrieval tests do not establish clinical retrieval quality.
 - The builder resets the collection instead of using versioned or incremental swaps.
 - Frontend record path depends on the process working directory.
