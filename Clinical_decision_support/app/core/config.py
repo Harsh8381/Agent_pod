@@ -5,7 +5,10 @@ from dotenv import load_dotenv
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# Prefer a project-level .env; fall back to the repository root (Agent_pod/.env).
+# load_dotenv never overrides values that are already set.
 load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT.parent / ".env")
 
 VECTOR_DB_PATH = PROJECT_ROOT / "chroma_db"
 VECTOR_DB_VECTORIZER = VECTOR_DB_PATH / "tfidf_vectorizer.pkl"
