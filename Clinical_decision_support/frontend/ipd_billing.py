@@ -6,14 +6,15 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+from html import escape as html_escape
+
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
 
-try:
-    from frontend.claim_generation_page import register_generated_bill
-except ModuleNotFoundError:
-    from claim_generation_page import register_generated_bill
+from frontend.claim_generation_page import register_generated_bill
+from frontend.ui.components import badge, card_title, initials, page_title, render_banner, render_tiles
+from frontend.ui.shell import render_page
 
 
 DEFAULT_WORKBOOK = Path(__file__).resolve().parents[2] / "IPD_25_Patient_Billing_Demo.xlsx"
@@ -141,6 +142,14 @@ def _date_value(value):
         return None
     parsed = pd.to_datetime(text, errors="coerce")
     return None if pd.isna(parsed) else parsed.date()
+
+
+def _display_date(value, time_value=None):
+    """'2026-01-04T00:00:00' + '08:30' -> '04 Jan 2026 08:30' for display."""
+    parsed = _date_value(value)
+    text = parsed.strftime("%d %b %Y") if parsed else _text(value)
+    time_text = _text(time_value)
+    return f"{text} {time_text}".strip() or "—"
 
 
 def _money(value):
@@ -361,17 +370,71 @@ def _build_pdf(patient, lines, gross, payer_amount, patient_amount):
     return buffer.getvalue()
 
 
-def show_ipd_billing(render_sidebar, render_header, workbook_path=DEFAULT_WORKBOOK):
-    render_sidebar("ipd_billing")
-    render_header("IPD billing", "Inpatient encounter details and itemized charge review", show_new=False)
+BILL_COLUMNS = (
+    "Charge Line ID", "Service Date", "Service Category", "Service Description", "Revenue Code",
+    "CPT / HCPCS", "ICD-10-CM Pointer", "Quantity", "Unit Charge ($)", "Line Charge ($)",
+)
+
+
+def _charge_table(frame, columns):
+    table = frame[columns].copy()
+    if "Service Date" in table.columns:
+        table["Service Date"] = table["Service Date"].map(_display_date)
+    st.dataframe(table, hide_index=True, width="stretch")
+
+
+def _patient_card(patient):
+    name = _text(patient.get("Patient Name")) or "Unnamed patient"
+    details = (
+        ("Admission", _display_date(patient.get("Admission Date"), patient.get("Admission Time"))),
+        ("Discharge", _display_date(patient.get("Discharge Date"), patient.get("Discharge Time"))),
+        ("Ward / bed", f"{_text(patient.get('Unit / Ward'))} · {_text(patient.get('Room / Bed'))}"),
+        ("Length of stay", f"{_text(patient.get('Length of Stay (Days)')) or 'N/A'} days"),
+        ("Payer", _text(patient.get("Payer")) or "Not recorded"),
+        ("MS-DRG", f"{_text(patient.get('MS-DRG'))} · {_text(patient.get('MS-DRG Description'))}"),
+    )
+    st.markdown(
+        '<div class="nc-banner-card">'
+        f'<div class="nc-patient"><div class="nc-initials lg">{html_escape(initials(name))}</div>'
+        f'<div><b style="font-size:.95rem">{html_escape(name)}</b><small>Patient {html_escape(_text(patient.get("Patient ID")))} · '
+        f'{html_escape(_text(patient.get("Gender")))} · DOB {html_escape(_display_date(patient.get("DOB")))}</small></div></div>'
+        '<div class="nc-badge-row">'
+        + badge(f'Primary {_text(patient.get("Primary ICD-10-CM"))} · {_text(patient.get("Primary Diagnosis"))}', "violet")
+        + (badge(f'Secondary {_text(patient.get("Secondary ICD-10-CM"))}', "gray") if _text(patient.get("Secondary ICD-10-CM")) else "")
+        + "</div></div>",
+        unsafe_allow_html=True,
+    )
+    render_tiles(details)
+
+
+def _generate_bill(selected_id, patient, lines):
+    gross = sum((line["Line Charge ($)"] for line in lines), Decimal("0.00")).quantize(CENT)
+    payer_amount = sum(
+        (line["Line Charge ($)"] * _payer_share(line) for line in lines), Decimal("0.00")
+    ).quantize(CENT, rounding=ROUND_HALF_UP)
+    patient_amount = (gross - payer_amount).quantize(CENT, rounding=ROUND_HALF_UP)
+    st.session_state.ipd_generated_bill = {
+        "encounter_id": selected_id,
+        "patient": patient,
+        "lines": lines,
+        "gross": gross,
+        "payer_amount": payer_amount,
+        "patient_amount": patient_amount,
+    }
+    register_generated_bill(st.session_state.ipd_generated_bill, source="IPD")
+
+
+def show_ipd_billing(workbook_path=DEFAULT_WORKBOOK):
+    render_page("ipd_billing")
+    page_title("Billing & RCM", "IPD Billing", "Inpatient encounter details, code validation and itemized charge review")
     path = Path(workbook_path)
     if not path.is_file():
-        st.error(f"IPD billing workbook not found: {path}")
+        render_banner("IPD billing workbook not found", str(path), tone="danger", icon="&#9888;")
         return
     try:
         workbook = load_ipd_workbook(str(path), path.stat().st_mtime_ns)
     except (OSError, ValueError, KeyError) as error:
-        st.error(str(error))
+        render_banner("The IPD billing workbook could not be read", str(error), tone="danger", icon="&#9888;")
         return
 
     patients = workbook["IPD Patient & Services"]
@@ -382,11 +445,15 @@ def show_ipd_billing(render_sidebar, render_header, workbook_path=DEFAULT_WORKBO
     patients["Encounter ID"] = patients["Encounter ID"].map(_text)
     encounter_ids = list(dict.fromkeys(value for value in patients["Encounter ID"] if value))
     if not encounter_ids:
-        st.error("The patient sheet has no Encounter IDs to select.")
+        render_banner("The patient sheet has no Encounter IDs to select.", tone="danger", icon="&#9888;")
         return
+    names = {row["Encounter ID"]: _text(row.get("Patient Name")) for row in patients.to_dict("records")}
     requested_encounter_id = st.session_state.get("ipd_billing_encounter")
     encounter_index = encounter_ids.index(requested_encounter_id) if requested_encounter_id in encounter_ids else 0
-    selected_id = st.selectbox("Encounter ID", encounter_ids, index=encounter_index, key="ipd_billing_encounter")
+    selected_id = st.selectbox(
+        "Inpatient encounter", encounter_ids, index=encounter_index, key="ipd_billing_encounter",
+        format_func=lambda value: f"{value} · {names.get(value) or 'Unnamed patient'}",
+    )
     matching_patients = patients[patients["Encounter ID"] == selected_id]
     patient = matching_patients.iloc[0].to_dict()
     if len(matching_patients) > 1:
@@ -397,70 +464,44 @@ def show_ipd_billing(render_sidebar, render_header, workbook_path=DEFAULT_WORKBO
     lines = _make_charge_lines(charges)
     validation = _validate_encounter(patient, charges, references, lines)
 
-    left, right = st.columns([2, 1])
-    with left:
-        st.subheader(_text(patient.get("Patient Name")) or "Unnamed patient")
-        st.caption(f"Patient ID {_text(patient.get('Patient ID'))} · {_text(patient.get('Gender'))} · DOB {_text(patient.get('DOB'))}")
-        st.write(f"**Admission:** {_text(patient.get('Admission Date'))} {_text(patient.get('Admission Time'))}  ·  **Discharge:** {_text(patient.get('Discharge Date'))} {_text(patient.get('Discharge Time'))}")
-        st.write(f"**Ward:** {_text(patient.get('Unit / Ward'))} · Room/bed {_text(patient.get('Room / Bed'))}")
-        st.write(f"**Diagnoses:** {_text(patient.get('Primary ICD-10-CM'))} {_text(patient.get('Primary Diagnosis'))}; secondary {_text(patient.get('Secondary ICD-10-CM'))}")
-    with right:
-        st.metric("Length of stay", f"{_text(patient.get('Length of Stay (Days)')) or 'N/A'} days")
-        st.write(f"**Payer:** {_text(patient.get('Payer')) or 'Not recorded'}")
-        st.write(f"**MS-DRG:** {_text(patient.get('MS-DRG'))} · {_text(patient.get('MS-DRG Description'))}")
-
+    _patient_card(patient)
     if validation:
-        with st.expander(f"Validation · {len(validation)} item(s)", expanded=True):
-            for issue in validation:
-                st.warning(issue)
+        render_banner(f"{len(validation)} validation item(s) need review", " · ".join(validation), tone="warn", icon="&#9888;")
     else:
-        st.success("Basic encounter, code, date and charge-total checks passed.")
+        render_banner("Encounter, code, date and charge-total checks passed", tone="ok", icon="&#10003;")
 
-    code_rows, _, _ = _code_details(patient, charges, references)
-    st.subheader("Encounter codes and services")
-    if code_rows:
-        st.dataframe(pd.DataFrame(code_rows), hide_index=True, width="stretch")
-    else:
-        st.info("No ICD or CPT/HCPCS codes are recorded for this encounter.")
+    with st.container(border=True):
+        code_rows, _, _ = _code_details(patient, charges, references)
+        card_title("Encounter codes and services", "ICD-10-CM diagnoses and CPT/HCPCS services with reference validation")
+        if code_rows:
+            st.dataframe(pd.DataFrame(code_rows), hide_index=True, width="stretch")
+        else:
+            st.info("No ICD or CPT/HCPCS codes are recorded for this encounter.")
 
-    st.subheader(f"Itemized charge lines · {len(lines)}")
-    bill_columns = [
-        "Charge Line ID", "Service Date", "Service Category", "Service Description", "Revenue Code",
-        "CPT / HCPCS", "ICD-10-CM Pointer", "Quantity", "Unit Charge ($)", "Line Charge ($)",
-    ]
     display_lines = pd.DataFrame(lines) if lines else pd.DataFrame(columns=charges.columns)
-    available_columns = [column for column in bill_columns if column in display_lines.columns]
-    st.dataframe(display_lines[available_columns], hide_index=True, width="stretch")
-
-    if not lines:
-        st.warning("No charge lines are linked to this encounter; a bill cannot be generated.")
-        return
-    if st.button("Generate bill", key="ipd_generate_bill", type="primary"):
-        gross = sum((line["Line Charge ($)"] for line in lines), Decimal("0.00")).quantize(CENT)
-        payer_amount = sum(
-            (line["Line Charge ($)"] * _payer_share(line) for line in lines), Decimal("0.00")
-        ).quantize(CENT, rounding=ROUND_HALF_UP)
-        patient_amount = (gross - payer_amount).quantize(CENT, rounding=ROUND_HALF_UP)
-        st.session_state.ipd_generated_bill = {
-            "encounter_id": selected_id,
-            "patient": patient,
-            "lines": lines,
-            "gross": gross,
-            "payer_amount": payer_amount,
-            "patient_amount": patient_amount,
-        }
-        register_generated_bill(st.session_state.ipd_generated_bill, source="IPD")
+    available_columns = [column for column in BILL_COLUMNS if column in display_lines.columns]
+    with st.container(border=True):
+        card_title("Itemized charge lines", f"{len(lines)} line(s) linked to {selected_id}", trailing=badge(f"{len(lines)} lines", "blue"))
+        _charge_table(display_lines, available_columns)
+        if not lines:
+            render_banner("No charge lines are linked to this encounter; a bill cannot be generated.", tone="warn", icon="&#9888;")
+            return
+        st.button("Generate bill", key="ipd_generate_bill", type="primary", icon=":material/receipt_long:",
+                  on_click=_generate_bill, args=(selected_id, patient, lines))
 
     generated = st.session_state.get("ipd_generated_bill")
-    if generated and generated.get("encounter_id") == selected_id:
-        st.subheader("Generated bill")
-        bill_table = pd.DataFrame(generated["lines"])
-        st.dataframe(bill_table[available_columns], hide_index=True, width="stretch")
-        total_columns = st.columns(3)
-        total_columns[0].metric("Gross total", _money(generated["gross"]))
-        total_columns[1].metric("Estimated payer amount", _money(generated["payer_amount"]))
-        total_columns[2].metric("Estimated patient amount", _money(generated["patient_amount"]))
-        st.caption("Estimates use the payer-responsibility percentages in the synthetic workbook. They are not benefits determinations or finalized patient responsibility.")
+    if not (generated and generated.get("encounter_id") == selected_id):
+        return
+    with st.container(border=True):
+        card_title("Generated bill", "Payer and patient estimates from the workbook's payer-responsibility percentages",
+                   trailing=badge("Draft", "amber"))
+        render_tiles((
+            ("Gross total", _money(generated["gross"])),
+            ("Estimated payer amount", _money(generated["payer_amount"])),
+            ("Estimated patient amount", _money(generated["patient_amount"])),
+        ))
+        _charge_table(pd.DataFrame(generated["lines"]), available_columns)
+        st.caption("Estimates are not benefits determinations or finalized patient responsibility.")
         patient_slug = re.sub(r"[^A-Za-z0-9_-]+", "_", _text(patient.get("Patient Name"))).strip("_") or "patient"
         try:
             pdf_bytes = _build_pdf(
@@ -468,12 +509,9 @@ def show_ipd_billing(render_sidebar, render_header, workbook_path=DEFAULT_WORKBO
                 generated["payer_amount"], generated["patient_amount"],
             )
         except (ImportError, ValueError, OSError) as error:
-            st.error(f"PDF generation is unavailable: {error}")
+            render_banner("PDF generation is unavailable", str(error), tone="danger", icon="&#9888;")
         else:
             st.download_button(
-                "Download bill PDF",
-                data=pdf_bytes,
-                file_name=f"IPD_Bill_{patient_slug}_{selected_id}.pdf",
-                mime="application/pdf",
-                key="ipd_bill_pdf",
+                "Download bill PDF", data=pdf_bytes, file_name=f"IPD_Bill_{patient_slug}_{selected_id}.pdf",
+                mime="application/pdf", key="ipd_bill_pdf", icon=":material/download:",
             )

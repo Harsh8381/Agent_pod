@@ -1,7 +1,7 @@
 import pytest
 
 from frontend.api_client import HealthcareApiClient
-from frontend.streamlit_app import (
+from frontend.encounter_pipeline import (
     filter_billing_eligible_cpt_results,
     get_backend_code_suggestions,
     prepare_billing_lines,
@@ -87,16 +87,16 @@ def test_empty_cpt_results_are_safe():
 
 
 def test_generic_xray_transcript_still_triggers_cpt_recommendation():
-    import frontend.streamlit_app as streamlit_app
+    import frontend.encounter_pipeline as pipeline
 
-    insights = streamlit_app.get_detected_insights("Chest xray was performed today for cough.")
+    insights = pipeline.get_detected_insights("Chest xray was performed today for cough.")
 
     assert "Chest X-ray" in insights
-    assert streamlit_app.get_code_suggestions(insights, "Chest xray was performed today for cough.")['cpt']
+    assert pipeline.get_code_suggestions(insights, "Chest xray was performed today for cough.")['cpt']
 
 
 def test_ordered_ct_scan_still_surfaces_as_documented_cpt_suggestion():
-    import frontend.streamlit_app as streamlit_app
+    import frontend.encounter_pipeline as pipeline
 
     insights = ["CT Scan"]
     documentation = (
@@ -104,24 +104,24 @@ def test_ordered_ct_scan_still_surfaces_as_documented_cpt_suggestion():
         "and continue monitoring the patient."
     )
 
-    result = streamlit_app.get_code_suggestions(insights, documentation)
+    result = pipeline.get_code_suggestions(insights, documentation)
 
     assert result["cpt"]
     assert any(item["CPT/HCPCS Code"] == "70450" for item in result["cpt"])
 
 
 def test_code_result_cache_signature_changes_with_transcript():
-    import frontend.streamlit_app as streamlit_app
+    import frontend.encounter_pipeline as pipeline
 
     insights = ["Chest X-ray", "History of Hypertension"]
 
-    assert streamlit_app.get_code_results_signature(insights, "Chest X-ray performed today.") != (
-        streamlit_app.get_code_results_signature(insights, "Chest X-ray planned.")
+    assert pipeline.get_code_results_signature(insights, "Chest X-ray performed today.") != (
+        pipeline.get_code_results_signature(insights, "Chest X-ray planned.")
     )
 
 
 def test_only_performed_candidates_reach_chargemaster(monkeypatch):
-    import frontend.streamlit_app as streamlit_app
+    import frontend.encounter_pipeline as pipeline
 
     lookup_inputs = []
 
@@ -129,7 +129,7 @@ def test_only_performed_candidates_reach_chargemaster(monkeypatch):
         lookup_inputs.append(list(candidates))
         return []
 
-    monkeypatch.setattr(streamlit_app, "build_cpt_bill_rows", capture_lookup)
+    monkeypatch.setattr(pipeline, "build_cpt_bill_rows", capture_lookup)
     performed = _api_cpt()
     unverifiable = _api_cpt(source="CT scan", code="70450")
 

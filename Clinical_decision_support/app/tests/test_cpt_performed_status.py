@@ -103,7 +103,7 @@ def test_inferred_procedures_are_candidates_not_performance_validation():
 
 def test_local_coding_fallback_requires_performed_status(monkeypatch):
     from frontend.api_client import HealthcareApiClient
-    from frontend.streamlit_app import get_backend_code_suggestions
+    from frontend.encounter_pipeline import get_backend_code_suggestions
 
     def unavailable_backend(self, conditions, procedures, documentation):
         raise RuntimeError("backend unavailable")

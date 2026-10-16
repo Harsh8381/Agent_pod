@@ -21,3 +21,6 @@ reportlab
 pydantic
 scipy
 urllib3
+rapidocr_onnxruntime
+pypdfium2
+pillow

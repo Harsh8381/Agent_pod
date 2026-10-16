@@ -9,15 +9,17 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
+from html import escape
+
 import pandas as pd
 import streamlit as st
 
-try:
-    from frontend.chargemaster import assign_revenue_codes
-    from frontend.claim_generator import determine_claim_type, determine_encounter_type
-except ModuleNotFoundError:
-    from chargemaster import assign_revenue_codes
-    from claim_generator import determine_claim_type, determine_encounter_type
+from frontend.chargemaster import assign_revenue_codes
+from frontend.claim_generator import determine_claim_type, determine_encounter_type
+from frontend.ocr_service import merge_code_results
+from frontend.ui.components import badge, card_title, page_title, render_banner, render_html_table, render_tiles
+from frontend.ui.shell import render_page
+from frontend.ui.state import can_open, go_to
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -663,61 +665,122 @@ def _claim_text(claim: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def show_claim_generation_page(render_sidebar, render_header) -> None:
-    render_sidebar("claim_generation")
-    render_header("Claim Generation", "Create a draft claim record from a generated bill", show_new=False)
+def _document_table(results: list[dict[str, Any]]) -> None:
+    rows = [
+        [f"<code>{escape(_text(row['CPT Code']))}</code>", escape(_text(row["Procedure"])), escape(_text(row["Required Document"])),
+         badge(row["Status"], "red" if row["Status"] == "Missing" else "green")]
+        for row in results
+    ]
+    render_html_table(["CPT", "Procedure", "Required document", "Status"], rows,
+                      ["blocked" if row["Status"] == "Missing" else "" for row in results])
 
-    estimate = st.session_state.get("estimated_hospital_bill")
-    if isinstance(estimate, dict):
-        record = next(
-            (
-                item for item in st.session_state.records
-                if item.get("id") == estimate.get("record_id")
-            ),
-            None,
-        )
-        if record:
-            code_results = (
-                st.session_state.code_results
-                if st.session_state.get("code_record_id") == record.get("id")
-                else record.get("code_results", {})
-            )
-            bill = build_ambient_bill(record, estimate, code_results)
-            register_generated_bill(bill, source=_text(estimate.get("encounter_type")) or "OPD")
+
+def _key_value_tiles(values: dict[str, Any]) -> None:
+    render_tiles([(label, _text(value) or "Not recorded") for label, value in values.items()])
+
+
+def _charge_rows(bill: dict[str, Any], encounter_type: str) -> list[dict[str, Any]]:
+    rows = []
+    for line in bill.get("lines", []):
+        if not isinstance(line, dict):
+            continue
+        has_revenue_code = _text(line.get("Revenue Code")).casefold() not in ("", "review_required")
+        row = {}
+        if encounter_type == "OPD":
+            row["Billing Entity"] = "Facility" if has_revenue_code else "Professional"
+        row.update({
+            "Service Date": line.get("Service Date"),
+            "CPT / HCPCS": line.get("CPT / HCPCS") or line.get("CPT/HCPCS Code"),
+            "Service Description": line.get("Service Description"),
+            "Quantity": line.get("Quantity"),
+            "Unit Charge ($)": line.get("Unit Charge ($)"),
+            "Line Charge ($)": line.get("Line Charge ($)"),
+        })
+        if encounter_type == "IPD" or has_revenue_code:
+            row["Revenue Code"] = line.get("Revenue Code")
+        rows.append(row)
+    return rows
+
+
+def _register_session_bills() -> None:
+    """Make bills produced on the Billing and IPD pages available for claim generation.
+
+    Consultation bills are persisted on the encounter record ("bill_estimate") when sent to
+    RCM, so they survive new sessions and restarts.
+    """
+    for record in st.session_state.get("records", []):
+        estimate = record.get("bill_estimate")
+        if isinstance(estimate, dict):
+            code_results = merge_code_results(record.get("code_results"), record.get("imported_codes"))
+            try:
+                register_generated_bill(build_ambient_bill(record, estimate, code_results), source=_text(estimate.get("encounter_type")) or "OPD")
+            except ValueError:
+                continue  # a saved bill without patient/encounter identifiers cannot become a claim
     ipd_bill = st.session_state.get("ipd_generated_bill")
     if isinstance(ipd_bill, dict):
         register_generated_bill(ipd_bill, source="IPD")
 
+
+def _generate_claims(bill, selected_entry, encounter_type, existing_claims, supporting_documents, document_context, claims):
+    missing_claim_types = [target_type for target_type, existing in existing_claims.items() if existing is None]
+    if not missing_claim_types:
+        st.warning("Claim already exists for this encounter and claim type.")
+        return
+    split_bills = _split_opd_bill(bill) if encounter_type == "OPD" else {}
+    for target_type in missing_claim_types:
+        try:
+            claim = build_claim_record(
+                split_bills.get(target_type, bill), selected_entry.get("source", ""),
+                supporting_documents=supporting_documents, claim_type=target_type,
+            )
+        except ValueError as error:
+            st.error(f"{target_type} claim was not generated: {error}")
+            continue
+        claim["Billing Entity"] = "Professional" if target_type == "837P" else "Facility"
+        claim["Clinical Context"] = {
+            "SOAP Note": _text(
+                document_context.get("approved_soap_note") or document_context.get("soap_note") or document_context.get("summary")
+            ) or _load_approved_soap_note(bill, document_context),
+            "CDS Recommendations": _text(document_context.get("recommendations")),
+            "Retrieved Guidelines": _text(document_context.get("retrieved_guidelines")),
+        }
+        claims.append(claim)
+        st.session_state.latest_generated_claim_id = claim["Claim ID"]
+
+
+def show_claim_generation_page() -> None:
+    render_page("claim_generation")
+    page_title("Billing & RCM", "Claim Generation", "Turn a generated bill into draft 837P / 837I claim records")
+    _register_session_bills()
     generated_bills = st.session_state.get("claim_generation_bills", {})
     if not generated_bills:
-        st.info("Generate a bill from the Codes or IPD Billing page first. It will then be available here.")
+        render_banner(
+            "No generated bills yet",
+            "Send an encounter to RCM from Billing & RCM, or generate a bill on IPD Billing; it will appear here.",
+            icon="&#9432;",
+        )
+        with st.container(horizontal=True, gap="small"):
+            st.button("Open Billing & RCM", key="claims_go_billing", type="primary", on_click=go_to, args=("billing",), disabled=not can_open("billing"))
+            st.button("Open IPD Billing", key="claims_go_ipd", type="secondary", on_click=go_to, args=("ipd_billing",), disabled=not can_open("ipd_billing"))
         return
 
     patient_entries: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     for key, entry in generated_bills.items():
-        bill = entry.get("bill", {})
-        patient = bill.get("patient", {})
+        patient = entry.get("bill", {}).get("patient", {})
         patient_id = _text(patient.get("Patient ID"))
-        patient_name = _text(patient.get("Patient Name")) or "Unnamed patient"
         if patient_id:
-            patient_entries.setdefault(f"{patient_name} · {patient_id}", []).append((key, entry))
+            patient_entries.setdefault(f"{_text(patient.get('Patient Name')) or 'Unnamed patient'} · {patient_id}", []).append((key, entry))
     if not patient_entries:
-        st.warning("No generated bill contains the patient identifiers needed for claim generation.")
+        render_banner("No generated bill contains the patient identifiers needed for claim generation.", tone="warn", icon="&#9888;")
         return
 
-    patient_label = st.selectbox("Select Patient", list(patient_entries), key="claim_generation_patient")
-    encounter_entries = patient_entries[patient_label]
+    patient_col, encounter_col = st.columns(2)
+    patient_label = patient_col.selectbox("Patient", list(patient_entries), key="claim_generation_patient")
     encounter_options = {}
-    for key, entry in encounter_entries:
+    for key, entry in patient_entries[patient_label]:
         label = f"{_text(entry['bill'].get('encounter_id'))} · {entry.get('source', 'OPD')}"
-        if label in encounter_options:
-            label = f"{label} · {key}"
-        encounter_options[label] = key
-    encounter_label = st.selectbox(
-        "Select Encounter ID",
-        list(encounter_options),
-        key=f"claim_generation_encounter_{patient_label}",
-    )
+        encounter_options[f"{label} · {key}" if label in encounter_options else label] = key
+    encounter_label = encounter_col.selectbox("Encounter", list(encounter_options), key=f"claim_generation_encounter_{patient_label}")
     selected_entry = generated_bills[encounter_options[encounter_label]]
     bill = selected_entry["bill"]
     encounter_type = determine_encounter_type(bill, selected_entry.get("source", ""))
@@ -725,248 +788,112 @@ def show_claim_generation_page(render_sidebar, render_header) -> None:
     generated_format = " + ".join(target_claim_types)
     revenue_mapping_issues = assign_revenue_codes(bill) if encounter_type == "IPD" else []
     patient = bill.get("patient", {})
-    encounter_record = _find_encounter_record(bill, st.session_state.get("records", []))
-    document_context = {**patient, **encounter_record}
-    supporting_documents = validate_supporting_documents(
-        bill,
-        record=document_context,
-        session_state=st.session_state,
-    )
-
-    st.subheader("Claim Format")
-    format_details = {
-        "Encounter Type": encounter_type,
-        "Claim Type": generated_format,
-        "Generated Format": generated_format,
-        "Supporting Documents Status": supporting_documents["Overall Status"],
-    }
-    st.dataframe(pd.DataFrame([format_details]), hide_index=True, width="stretch")
-    if encounter_type == "OPD":
-        st.subheader("Rendering Provider")
-        st.json(_rendering_provider(bill, patient))
-        st.subheader("Facility Information")
-        st.json(_facility_information(bill, patient))
-    else:
-        st.subheader("Facility Information")
-        st.json(_facility_information(bill, patient))
-        if revenue_mapping_issues:
-            st.warning(
-                "Revenue codes need review for: " + ", ".join(revenue_mapping_issues)
-            )
-
-    st.subheader("Patient Details")
-    details = {
-        "Patient ID": _text(patient.get("Patient ID")),
-        "Patient Name": _text(patient.get("Patient Name")),
-        "Gender": _text(patient.get("Gender")),
-        "DOB": _text(patient.get("DOB")),
-        "Payer": _text(patient.get("Payer")) or "Not recorded",
-        "Admission Date": _text(patient.get("Admission Date")),
-        "Discharge Date": _text(patient.get("Discharge Date")),
-        "Encounter Type": encounter_type,
-        "Claim Type": generated_format,
-    }
-    st.dataframe(pd.DataFrame([details]), hide_index=True, width="stretch")
-    st.write(f"Encounter Type: **{encounter_type}** · Claim Type: **{generated_format}**")
-
-    diagnosis_codes = _diagnosis_codes(bill)
-    cpt_codes = []
-    for line in bill.get("lines", []):
-        if isinstance(line, dict):
-            cpt_codes.extend(_codes(line.get("CPT / HCPCS") or line.get("CPT/HCPCS Code")))
-
-    icd_column, cpt_column = st.columns(2)
-    with icd_column:
-        st.subheader("ICD-10 Codes")
-        st.write(", ".join(dict.fromkeys(diagnosis_codes)) or "No ICD-10 codes recorded")
-    with cpt_column:
-        st.subheader("CPT Codes")
-        st.write(", ".join(dict.fromkeys(cpt_codes)) or "No CPT/HCPCS codes recorded")
-
-    st.subheader("Charges")
-    charge_rows = [
-        {
-            **(
-                {
-                    "Billing Entity": (
-                        "Facility"
-                        if _text(line.get("Revenue Code")).casefold()
-                        not in ("", "review_required")
-                        else "Professional"
-                    )
-                }
-                if encounter_type == "OPD"
-                else {}
-            ),
-            "Service Date": line.get("Service Date"),
-            "CPT / HCPCS": line.get("CPT / HCPCS") or line.get("CPT/HCPCS Code"),
-            "Service Description": line.get("Service Description"),
-            "Quantity": line.get("Quantity"),
-            "Unit Charge ($)": line.get("Unit Charge ($)"),
-            "Line Charge ($)": line.get("Line Charge ($)"),
-            **(
-                {"Revenue Code": line.get("Revenue Code")}
-                if encounter_type == "IPD"
-                or (
-                    encounter_type == "OPD"
-                    and _text(line.get("Revenue Code")).casefold()
-                    not in ("", "review_required")
-                )
-                else {}
-            ),
-        }
-        for line in bill.get("lines", [])
-        if isinstance(line, dict)
-    ]
-    if charge_rows:
-        st.dataframe(pd.DataFrame(charge_rows), hide_index=True, width="stretch")
+    document_context = {**patient, **_find_encounter_record(bill, st.session_state.get("records", []))}
+    supporting_documents = validate_supporting_documents(bill, record=document_context, session_state=st.session_state)
+    documents_complete = supporting_documents["Overall Status"] == "Complete"
     total = _amount(bill.get("gross"))
-    st.metric("Total Bill Amount", f"${total:,.2f}" if total is not None else "Unavailable")
 
-    st.subheader("Supporting Clinical Documents")
-    st.markdown("#### Supporting Documents Validation")
-    if supporting_documents["Overall Status"] == "Complete":
-        st.success("Overall Documentation Status: Complete")
-    else:
-        st.error("Overall Documentation Status: Incomplete")
-        st.warning("Claim may be denied due to missing supporting documentation.")
-    validation_frame = pd.DataFrame(
-        supporting_documents["Results"],
-        columns=["CPT Code", "Procedure", "Required Document", "Status"],
-    )
-    if not validation_frame.empty:
-        styled_validation = validation_frame.style.apply(
-            lambda row: [
-                "background-color: #ffe0e0; color: #8b0000"
-                if row["Status"] == "Missing"
-                else ""
-                for _ in row
-            ],
-            axis=1,
+    render_tiles((
+        ("Encounter type", encounter_type),
+        ("Claim format", generated_format),
+        ("Supporting documents", supporting_documents["Overall Status"]),
+        ("Total bill", f"${total:,.2f}" if total is not None else "Unavailable"),
+    ))
+
+    details_col, entity_col = st.columns(2, gap="medium")
+    with details_col:
+        with st.container(border=True):
+            card_title("Patient & encounter", _text(bill.get("encounter_id")))
+            _key_value_tiles({
+                "Patient ID": patient.get("Patient ID"), "Patient name": patient.get("Patient Name"),
+                "Gender": patient.get("Gender"), "DOB": patient.get("DOB"), "Payer": patient.get("Payer"),
+                "Admission": patient.get("Admission Date"), "Discharge": patient.get("Discharge Date"),
+            })
+    with entity_col:
+        with st.container(border=True):
+            if encounter_type == "OPD":
+                card_title("Rendering provider")
+                _key_value_tiles(_rendering_provider(bill, patient))
+            card_title("Facility")
+            _key_value_tiles(_facility_information(bill, patient))
+            if revenue_mapping_issues:
+                render_banner("Revenue codes need review", ", ".join(revenue_mapping_issues), tone="warn", icon="&#9888;")
+
+    diagnosis_codes = list(dict.fromkeys(_diagnosis_codes(bill)))
+    cpt_codes = list(dict.fromkeys(
+        code for line in bill.get("lines", []) if isinstance(line, dict)
+        for code in _codes(line.get("CPT / HCPCS") or line.get("CPT/HCPCS Code"))
+    ))
+    with st.container(border=True):
+        card_title("Codes and charges", f"{len(diagnosis_codes)} diagnosis · {len(cpt_codes)} procedure code(s)")
+        st.markdown(
+            '<div class="nc-badge-row">'
+            + ("".join(badge(code, "violet") for code in diagnosis_codes) or badge("No ICD-10 codes", "gray"))
+            + ("".join(badge(code, "blue") for code in cpt_codes) or badge("No CPT/HCPCS codes", "gray"))
+            + "</div>",
+            unsafe_allow_html=True,
         )
-        st.dataframe(styled_validation, hide_index=True, width="stretch")
-    else:
-        st.info("No CPT/HCPCS codes are present on this bill to validate.")
+        charge_rows = _charge_rows(bill, encounter_type)
+        if charge_rows:
+            st.dataframe(pd.DataFrame(charge_rows), hide_index=True, width="stretch")
+
+    with st.container(border=True):
+        card_title(
+            "Supporting clinical documents", "Documentation each billed procedure needs before submission",
+            trailing=badge(supporting_documents["Overall Status"], "green" if documents_complete else "red"),
+        )
+        if not documents_complete:
+            render_banner("Claim may be denied", "Some required supporting documents are missing.", tone="danger", icon="&#9888;")
+        if supporting_documents["Results"]:
+            _document_table(supporting_documents["Results"])
+        else:
+            st.info("No CPT/HCPCS codes are present on this bill to validate.")
 
     claims = st.session_state.setdefault("generated_claim_records", [])
     encounter_id = _text(bill.get("encounter_id"))
-    existing_claims = {
-        target_type: _find_claim_for_encounter(claims, encounter_id, target_type)
-        for target_type in target_claim_types
-    }
+    existing_claims = {target_type: _find_claim_for_encounter(claims, encounter_id, target_type) for target_type in target_claim_types}
     for target_type, existing_claim in existing_claims.items():
         if existing_claim is not None:
-            st.info(
-                f"Existing {target_type} claim for this encounter: "
-                f"{existing_claim['Claim ID']}."
-            )
+            render_banner(f"{target_type} claim already generated", existing_claim["Claim ID"], tone="ok", icon="&#10003;")
     bill_issues = _bill_issues(bill)
     if bill_issues:
-        for issue in bill_issues:
-            st.warning(issue)
-    if st.button(
-        "Generate Claims",
-        type="primary",
-        key="generate_claim_record",
-        disabled=bool(bill_issues),
-    ):
-        missing_claim_types = [
-            target_type for target_type, existing_claim in existing_claims.items()
-            if existing_claim is None
-        ]
-        if not missing_claim_types:
-            st.warning("Claim already exists for this encounter and claim type.")
-        else:
-            split_bills = _split_opd_bill(bill) if encounter_type == "OPD" else {}
-            for target_type in missing_claim_types:
-                selected_bill = split_bills.get(target_type, bill)
+        render_banner("Fix these before generating claims", " · ".join(bill_issues), tone="warn", icon="&#9888;")
+    if st.button("Generate claims", type="primary", key="generate_claim_record", icon=":material/description:", disabled=bool(bill_issues)):
+        _generate_claims(bill, selected_entry, encounter_type, existing_claims, supporting_documents, document_context, claims)
 
-                try:
-                    claim = build_claim_record(
-                        selected_bill,
-                        selected_entry.get("source", ""),
-                        supporting_documents=supporting_documents,
-                        claim_type=target_type,
-                    )
-                except ValueError as error:
-                    st.error(f"{target_type} claim was not generated: {error}")
-                else:
-                    claim["Billing Entity"] = "Professional" if target_type == "837P" else "Facility"
-                    claim["Clinical Context"] = {
-                        "SOAP Note": _text(
-                            document_context.get("approved_soap_note")
-                            or document_context.get("soap_note")
-                            or document_context.get("summary")
-                        ) or _load_approved_soap_note(bill, document_context),
-                        "CDS Recommendations": _text(document_context.get("recommendations")),
-                        "Retrieved Guidelines": _text(document_context.get("retrieved_guidelines")),
-                    }
-                    claims.append(claim)
-                    st.session_state.latest_generated_claim_id = claim["Claim ID"]
-
-    if claims:
-        st.subheader("Claim Summary")
-        summary_rows = [
+    if not claims:
+        return
+    with st.container(border=True):
+        card_title("Claim summary", f"{len(claims)} draft claim record(s) this session")
+        st.dataframe(pd.DataFrame([
             {
                 "Claim ID": claim["Claim ID"],
                 "Claim Type": claim["Claim Type"],
-                "Billing Entity": claim.get(
-                    "Billing Entity",
-                    "Professional" if claim["Claim Type"] == "837P" else "Facility",
-                ),
+                "Billing Entity": claim.get("Billing Entity", "Professional" if claim["Claim Type"] == "837P" else "Facility"),
                 "Status": claim["Status"],
                 "Amount": f"${claim.get('Claim Amount', claim.get('Total Facility Amount', claim.get('Total Claim Amount', 0))):,.2f}",
             }
             for claim in claims
-        ]
-        st.dataframe(pd.DataFrame(summary_rows), hide_index=True, width="stretch")
-
+        ]), hide_index=True, width="stretch")
         selected_claims = [
             claim for target_type in target_claim_types
             if (claim := _find_claim_for_encounter(claims, encounter_id, target_type)) is not None
         ]
         if selected_claims:
-            st.subheader("Claim Supporting Document Results")
             claim_validation = selected_claims[0]["Supporting Documents Validation"]
-            st.write(f"Overall Documentation Status: **{claim_validation['Overall Status']}**")
-            claim_validation_frame = pd.DataFrame(
-                claim_validation["Results"],
-                columns=["CPT Code", "Procedure", "Required Document", "Status"],
-            )
-            if not claim_validation_frame.empty:
-                st.dataframe(
-                    claim_validation_frame.style.apply(
-                        lambda row: [
-                            "background-color: #ffe0e0; color: #8b0000"
-                            if row["Status"] == "Missing"
-                            else ""
-                            for _ in row
-                        ],
-                        axis=1,
-                    ),
-                    hide_index=True,
-                    width="stretch",
+            st.markdown(f'<div class="nc-label" style="margin-top:.6rem">Claim documentation · {escape(claim_validation["Overall Status"])}</div>', unsafe_allow_html=True)
+            if claim_validation["Results"]:
+                _document_table(claim_validation["Results"])
+        for selected_claim in selected_claims:
+            patient_slug = re.sub(r"[^A-Za-z0-9_-]+", "_", _text(selected_claim["Patient Information"].get("Patient Name")) or "patient").strip("_") or "patient"
+            with st.container(horizontal=True, gap="small"):
+                st.download_button(
+                    f"Download {selected_claim['Claim Type']} (JSON)", data=json.dumps(selected_claim, indent=2, ensure_ascii=False),
+                    file_name=f"{selected_claim['Claim ID']}_{patient_slug}.json", mime="application/json",
+                    key=f"download_claim_json_{selected_claim['Claim ID']}", icon=":material/download:",
                 )
-            for selected_claim in selected_claims:
-                claim_type_label = selected_claim["Claim Type"]
-                patient_slug = re.sub(
-                    r"[^A-Za-z0-9_-]+",
-                    "_",
-                    _text(selected_claim["Patient Information"].get("Patient Name")) or "patient",
-                ).strip("_") or "patient"
-                safe_claim = json.dumps(selected_claim, indent=2, ensure_ascii=False)
-                download_json, download_text = st.columns(2)
-                download_json.download_button(
-                    f"Download {claim_type_label} (JSON)",
-                    data=safe_claim,
-                    file_name=f"{selected_claim['Claim ID']}_{patient_slug}.json",
-                    mime="application/json",
-                    key=f"download_claim_json_{selected_claim['Claim ID']}",
-                )
-                download_text.download_button(
-                    f"Download {claim_type_label} (TXT)",
-                    data=_claim_text(selected_claim),
-                    file_name=f"{selected_claim['Claim ID']}_{patient_slug}.txt",
-                    mime="text/plain",
-                    key=f"download_claim_text_{selected_claim['Claim ID']}",
+                st.download_button(
+                    f"Download {selected_claim['Claim Type']} (TXT)", data=_claim_text(selected_claim),
+                    file_name=f"{selected_claim['Claim ID']}_{patient_slug}.txt", mime="text/plain",
+                    key=f"download_claim_text_{selected_claim['Claim ID']}", icon=":material/download:",
                 )

@@ -34,6 +34,7 @@ def build_knowledge_base(docx_path: str = str(KNOWLEDGE_BASE_DIR / "knowledge_ba
 	else:
 		try:
 			embeddings = generate_sentence_embeddings(texts, EMBEDDING_BATCH_SIZE)
+			backend = "sentence_transformer"
 		except Exception as error:
 			if backend != "auto":
 				raise RuntimeError(

@@ -26,7 +26,10 @@ def store_chunks(chunks, embeddings, batch_size=250):
         batch = chunks[start:start + batch_size]
         batch_embeddings = embeddings[start:start + batch_size]
         collection.upsert(
-            ids=[f"{item['metadata']['source']}-p{item['metadata']['page']}-c{start + offset}"
+            # PDF chunks carry a "page"; Word chunks carry a "block" instead.
+            ids=[f"{item['metadata']['source']}-"
+                 f"{'p' + str(item['metadata']['page']) if 'page' in item['metadata'] else 'b' + str(item['metadata'].get('block', 0))}"
+                 f"-c{start + offset}"
                  for offset, item in enumerate(batch)],
             documents=[item["text"] for item in batch],
             embeddings=batch_embeddings.tolist(),

@@ -86,6 +86,9 @@ class HealthcareApiClient:
         response.raise_for_status()
         return response.json()
 
+    def retrieve_knowledge(self, query: str, top_k: int = 5) -> dict:
+        return self._request("POST", "/retrieve", json_body={"query": query, "top_k": top_k})
+
     def export_patient_data(self, patient_id: str | None = None) -> dict:
         return self._request("GET", "/patients/export", params={"patient_id": patient_id} if patient_id else None)
 

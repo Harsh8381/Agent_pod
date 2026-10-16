@@ -1,0 +1,11 @@
+# Pastel light theme; colors mirror frontend/ui/theme.py (PALETTE).
+[theme]
+base = "light"
+primaryColor = "#8E7FE6"
+backgroundColor = "#F6F7FB"
+secondaryBackgroundColor = "#F5F3FF"
+textColor = "#262B3D"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
