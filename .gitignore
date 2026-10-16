@@ -69,3 +69,7 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+
+# NuuCare user accounts (password hashes, audit log)
+Clinical_decision_support/data/access_control.json
+Clinical_decision_support/data/access_control.tmp

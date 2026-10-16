@@ -1,4 +1,4 @@
-from frontend.streamlit_app import select_cpt_results_for_bill
+from frontend.encounter_pipeline import select_cpt_results_for_bill
 
 
 def test_bill_selection_includes_only_selected_cpt_codes():

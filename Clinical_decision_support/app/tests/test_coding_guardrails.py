@@ -52,7 +52,7 @@ def test_performed_xray_uses_cpt_pipeline():
 
 
 def test_knee_pain_produces_icd_only():
-    from frontend.streamlit_app import get_code_suggestions
+    from frontend.encounter_pipeline import get_code_suggestions
 
     result = get_code_suggestions(["Knee pain"])
     assert result["icd10"]
