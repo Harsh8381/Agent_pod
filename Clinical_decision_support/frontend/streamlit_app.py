@@ -107,6 +107,12 @@ BILLING_NOTICE = (
 )
 ANALYSIS_VERSION = "2"
 CODE_MATCHER_VERSION = "4"
+ENABLE_VBC_POC = os.getenv("ENABLE_VBC_POC", "").strip().casefold() in {
+    "true",
+    "1",
+    "yes",
+    "on",
+}
 
 
 # ============================================================
@@ -808,6 +814,8 @@ def render_sidebar(active_page):
             ("review", "Clinical Review"),
             ("codes", "Codes"),
         ]
+        if ENABLE_VBC_POC:
+            navigation.append(("vbc_dashboard", "VBC Dashboard"))
         for page_key, label in navigation:
             if st.button(label, key=f"nav_{page_key}", use_container_width=True):
                 if page_key == "review" and not st.session_state.current_record:
@@ -1944,6 +1952,10 @@ elif st.session_state.page == "review":
     show_review_note()
 elif st.session_state.page == "codes":
     show_codes()
+elif st.session_state.page == "vbc_dashboard" and ENABLE_VBC_POC:
+    from frontend.vbc_population_dashboard import show_vbc_population_dashboard
+
+    show_vbc_population_dashboard(render_sidebar)
 else:
     st.session_state.page = "dashboard"
     st.rerun()
