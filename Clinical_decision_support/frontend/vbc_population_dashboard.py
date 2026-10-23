@@ -24,7 +24,6 @@ def _filter_options() -> tuple[dict[str, list[str]], dict[str, str], str | None]
     repository = VbcDatasetRepository()
     patients = repository.get_patients()
     providers = repository.get_providers()
-    measure_results = repository.get_measure_results()
     care_gaps = repository.get_care_gaps()
     summary = repository.get_population_summary()
     provider_names = {
@@ -33,8 +32,12 @@ def _filter_options() -> tuple[dict[str, list[str]], dict[str, str], str | None]
         if row.get("provider_id")
     }
     options = {
-        "cohort": sorted(
-            {row["cohort"] for row in patients if row.get("cohort")},
+        "population_segment": sorted(
+            {
+                repository.get_population_field(row)
+                for row in patients
+                if repository.get_population_field(row)
+            },
             key=str.casefold,
         ),
         "provider_id": sorted(provider_names),
@@ -52,7 +55,7 @@ def _filter_options() -> tuple[dict[str, list[str]], dict[str, str], str | None]
             key=str.casefold,
         ),
         "measure_id": sorted(
-            {row["measure_id"] for row in measure_results if row.get("measure_id")}
+            repository.list_supported_measures()
         ),
         "gap_type": sorted(
             {row["gap_type"] for row in care_gaps if row.get("gap_type")},
@@ -88,9 +91,19 @@ def _select_filter(label: str, key: str, options: list[str]) -> str | None:
 
 def _render_header(result: dict[str, Any]) -> None:
     metadata = result["metadata"]
+    dataset_name = escape(str(metadata.get("dataset_name") or "Synthetic VBC POC"))
+    dataset_version = escape(str(metadata.get("dataset_version") or "Unknown"))
+    patient_count = metadata.get("patient_count", "Unknown")
+    measure_count = metadata.get("measure_count", "Unknown")
     period_start = metadata.get("measurement_period_start") or "Unknown"
     period_end = metadata.get("measurement_period_end") or "Unknown"
     as_of_date = escape(str(metadata.get("as_of_date") or "Unknown"))
+    synthetic_notice = escape(
+        str(
+            metadata.get("synthetic_data_notice")
+            or SYNTHETIC_NOTICE
+        )
+    )
     st.markdown(
         f"""
 <div style="background:#111827;color:#f8fafc;padding:1.1rem 1.35rem;
@@ -99,14 +112,24 @@ border-radius:.7rem;margin-bottom:.8rem">
   text-transform:uppercase;color:#99f6e4">Value-Based Care</div>
   <div style="font-size:1.65rem;font-weight:800;margin:.1rem 0 .35rem">
   Population Dashboard</div>
+  <div style="font-size:.9rem;font-weight:700">{dataset_name} · v{dataset_version}</div>
   <div style="font-size:.82rem;color:#cbd5e1">
+  {patient_count} patients · {measure_count} measures
+  &nbsp; · &nbsp;
   Measurement period: {escape(str(period_start))} to {escape(str(period_end))}
   &nbsp; · &nbsp; As of {as_of_date}
-  &nbsp; · &nbsp; Synthetic VBC POC Data</div>
+  </div>
 </div>
 """,
         unsafe_allow_html=True,
     )
+    st.caption(f"Active dataset: {dataset_name}, {patient_count} patients")
+    if metadata.get("is_legacy_dataset"):
+        st.caption(
+            "Legacy cohort labels are mapped to population segments for display "
+            "compatibility; this is not an official clinical classification."
+        )
+    st.info(synthetic_notice)
 
 
 def _render_kpis(kpis: dict[str, Any]) -> None:
@@ -168,10 +191,15 @@ def _render_measures(measures: list[dict[str, Any]]) -> None:
 
     table_rows = [
         {
+            "Measure ID": row["measure_id"],
             "Measure": row["measure_name"],
+            "Initial Population": row.get(
+                "initial_population_count", row["total_evaluations"]
+            ),
             "Eligible": row["eligible_count"],
+            "Excluded": row.get("excluded_count", 0),
             "Met": row["met_count"],
-            "Open": row["open_gap_count"],
+            "Open / Actionable": row["open_gap_count"],
             "Uncontrolled": row["uncontrolled_count"],
             "Evidence Review": row["evidence_review_count"],
             "Data Quality": row["data_quality_count"],
@@ -183,6 +211,60 @@ def _render_measures(measures: list[dict[str, Any]]) -> None:
         for row in measures
     ]
     st.dataframe(pd.DataFrame(table_rows), hide_index=True, width="stretch")
+
+
+def _render_measure_history(
+    history: list[dict[str, Any]],
+    measure_performance: list[dict[str, Any]],
+) -> None:
+    st.subheader("Monthly performance trend")
+    if not history:
+        st.info("Measure history is unavailable for this dataset.")
+        return
+
+    measure_ids = sorted(
+        {str(row.get("measure_id") or "") for row in history if row.get("measure_id")},
+        key=lambda value: (
+            ("GSD", "BPD-E", "KED", "BCS-E", "COL-E", "TRC").index(value)
+            if value in ("GSD", "BPD-E", "KED", "BCS-E", "COL-E", "TRC")
+            else 6,
+            value,
+        ),
+    )
+    selected_measure = st.selectbox(
+        "Trend measure",
+        measure_ids,
+        key="vbc_dashboard_history_measure",
+    )
+    selected_rows = [
+        row for row in history if row.get("measure_id") == selected_measure
+    ]
+    if not selected_rows:
+        st.info("No valid monthly history is available for this measure.")
+        return
+
+    history_frame = pd.DataFrame(
+        [
+            {
+                "Snapshot": row["snapshot_date"],
+                "Actual Performance": pd.to_numeric(
+                    row.get("performance_rate"), errors="coerce"
+                ),
+                "Synthetic POC Projection": pd.to_numeric(
+                    row.get("projected_performance_rate"), errors="coerce"
+                ),
+                "POC Target": pd.to_numeric(
+                    row.get("poc_target_rate"), errors="coerce"
+                ),
+            }
+            for row in selected_rows
+        ]
+    ).set_index("Snapshot")
+    st.line_chart(history_frame, y=list(history_frame.columns))
+    st.caption(
+        "Projection is a synthetic POC projection only; it is not a CMS forecast. "
+        "The target is a POC target, not an official cut point."
+    )
 
 
 def _render_charts(
@@ -226,14 +308,14 @@ def _render_worklist(rows: list[dict[str, Any]]) -> None:
         {
             "Patient ID": row["patient_id"],
             "Masked Patient": row["masked_display_name"],
-            "Cohort": row["cohort"],
-            "Risk": row["risk_category"],
+            "Population Segment": row["population_segment"],
+            "Risk Category": row["risk_category"],
             "Risk Score": row["risk_score"],
             "Gap Count": row["care_gap_count"],
             "Highest Priority": row["highest_priority"],
             "Measures": ", ".join(row["measure_names"]),
             "Owner": ", ".join(row["owners"]),
-            "Earliest Due": row["earliest_due_date"] or "Unknown",
+            "Earliest Due Date": row["earliest_due_date"] or "Unknown",
             "Overdue": row["overdue_gap_count"],
         }
         for row in rows
@@ -280,11 +362,8 @@ def show_vbc_population_dashboard(render_sidebar) -> None:
 
     try:
         options, provider_names, summary_as_of_date = _filter_options()
-    except VbcDatasetNotFoundError:
-        st.error(
-            "The synthetic VBC dataset archive is unavailable. Check that "
-            "data/synthetic_vbc_dataset.zip exists in the project."
-        )
+    except VbcDatasetNotFoundError as error:
+        st.error(str(error))
         return
     except VbcDatasetValidationError as error:
         if "population_dashboard_summary.json" in str(error):
@@ -293,10 +372,7 @@ def show_vbc_population_dashboard(render_sidebar) -> None:
                 "in the VBC archive."
             )
         else:
-            st.error(
-                "The synthetic VBC archive is incomplete or malformed. "
-                "Check its required source files and columns."
-            )
+            st.error(f"VBC dataset configuration or archive error: {error}")
         return
     except (OSError, ValueError):
         st.error("The synthetic VBC dashboard could not load its source data.")
@@ -304,8 +380,10 @@ def show_vbc_population_dashboard(render_sidebar) -> None:
 
     filter_columns = st.columns(4)
     with filter_columns[0]:
-        selected_cohort = _select_filter(
-            "Cohort", "cohort", options["cohort"]
+        selected_population_segment = _select_filter(
+            "Population segment",
+            "population_segment",
+            options["population_segment"],
         )
     with filter_columns[1]:
         provider_options = [
@@ -350,7 +428,7 @@ def show_vbc_population_dashboard(render_sidebar) -> None:
     try:
         result = get_population_dashboard(
             as_of_date=summary_as_of_date,
-            cohort=selected_cohort,
+            population_segment=selected_population_segment,
             provider_id=selected_provider,
             risk_category=selected_risk,
             measure_id=selected_measure,
@@ -359,21 +437,23 @@ def show_vbc_population_dashboard(render_sidebar) -> None:
             owner=selected_owner,
             status=selected_status,
         )
-    except VbcDatasetNotFoundError:
-        st.error("The synthetic VBC dataset archive is unavailable.")
+    except VbcDatasetNotFoundError as error:
+        st.error(str(error))
         return
-    except VbcDatasetValidationError:
-        st.error("The synthetic VBC archive is incomplete or malformed.")
+    except VbcDatasetValidationError as error:
+        st.error(f"VBC dataset configuration or archive error: {error}")
         return
     except (OSError, ValueError):
         st.error("The synthetic VBC dashboard could not calculate these results.")
         return
 
     _render_header(result)
-    st.info(SYNTHETIC_NOTICE)
     _render_kpis(result["kpis"])
     _render_freshness(result["freshness_summary"])
     _render_measures(result["measure_performance"])
+    _render_measure_history(
+        result["measure_history"], result["measure_performance"]
+    )
     _render_charts(result["risk_distribution"], result["gap_distribution"])
     _render_worklist(result["priority_worklist"])
     _render_quality_panel(result, result["warnings"])

@@ -8,6 +8,7 @@ from app.vbc.dataset import (
     VbcDatasetNotFoundError,
     VbcDatasetRepository,
     VbcDatasetValidationError,
+    get_dataset_path,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "VbcDatasetNotFoundError",
     "VbcDatasetRepository",
     "VbcDatasetValidationError",
+    "get_dataset_path",
 ]

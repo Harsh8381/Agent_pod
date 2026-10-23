@@ -226,6 +226,10 @@ def test_dashboard_has_expected_sections_and_real_archive_totals():
         "priority_worklist",
         "data_quality_summary",
         "freshness_summary",
+        "measure_history",
+        "population_segment_distribution",
+        "provider_distribution",
+        "outreach_disposition_distribution",
         "warnings",
     }
     assert result["kpis"]["total_patients"] == 20
@@ -261,6 +265,103 @@ def test_measure_exclusions_and_80_percent_ceiling_goal(monkeypatch):
     assert measure["poc_target_rate"] == 80.0
     assert measure["required_met_count"] == 4
     assert measure["gaps_to_goal"] == 1
+
+
+def test_eligibility_source_controls_denominator_and_preserves_unknown_measures(
+    monkeypatch,
+):
+    tables = _minimal_tables()
+    tables["measure_results.csv"] = [
+        {
+            "patient_id": "P-1",
+            "measure_id": "M-1",
+            "measure_name": "Measure One",
+            "state": "Met",
+        },
+        {
+            "patient_id": "P-2",
+            "measure_id": "M-1",
+            "measure_name": "Measure One",
+            "state": "Met",
+        },
+        {
+            "patient_id": "P-1",
+            "measure_id": "ZZ-NEW",
+            "measure_name": "Future Measure",
+            "state": "Not Met",
+        },
+    ]
+    tables["measure_eligibility.csv"] = [
+        {
+            "patient_id": "P-1",
+            "measure_id": "M-1",
+            "measure_name": "Measure One",
+            "initial_population": "Yes",
+            "eligible": "Yes",
+            "denominator_exclusion": "No",
+        },
+        {
+            "patient_id": "P-2",
+            "measure_id": "M-1",
+            "measure_name": "Measure One",
+            "initial_population": "Yes",
+            "eligible": "No",
+            "denominator_exclusion": "Yes",
+        },
+        {
+            "patient_id": "P-1",
+            "measure_id": "ZZ-NEW",
+            "measure_name": "Future Measure",
+            "initial_population": "Yes",
+            "eligible": "Yes",
+            "denominator_exclusion": "No",
+        },
+    ]
+
+    result = _result(monkeypatch, tables)
+    measures = {
+        row["measure_id"]: row for row in result["measure_performance"]
+    }
+
+    assert list(measures) == ["M-1", "ZZ-NEW"]
+    assert measures["M-1"]["initial_population_count"] == 2
+    assert measures["M-1"]["eligible_count"] == 1
+    assert measures["M-1"]["excluded_count"] == 1
+    assert measures["M-1"]["met_count"] == 1
+    assert measures["ZZ-NEW"]["eligible_count"] == 1
+
+
+def test_eligibility_result_mismatch_is_warned_without_dropping_denominator(
+    monkeypatch,
+):
+    tables = _minimal_tables()
+    tables["measure_results.csv"] = [
+        {
+            "patient_id": "P-1",
+            "measure_id": "M-1",
+            "measure_name": "Measure One",
+            "state": "Met",
+        }
+    ]
+    tables["measure_eligibility.csv"] = [
+        {
+            "patient_id": patient_id,
+            "measure_id": "M-1",
+            "measure_name": "Measure One",
+            "initial_population": "Yes",
+            "eligible": "Yes",
+            "denominator_exclusion": "No",
+        }
+        for patient_id in ("P-1", "P-2")
+    ]
+
+    result = _result(monkeypatch, tables)
+
+    assert result["measure_performance"][0]["eligible_count"] == 2
+    assert result["measure_performance"][0]["met_count"] == 1
+    assert result["kpis"]["eligible_evaluations"] == 2
+    assert result["kpis"]["quality_performance_rate"] == 50.0
+    assert any("1 missing result" in warning for warning in result["warnings"])
 
 
 @pytest.mark.parametrize(

@@ -14,7 +14,10 @@ from collections import Counter, defaultdict
 from datetime import date, datetime
 from typing import Any
 
-from app.vbc.dataset import VbcDatasetRepository
+from app.vbc.dataset import (
+    PREFERRED_MEASURE_ORDER,
+    VbcDatasetRepository,
+)
 
 
 MEASURE_LABEL = "HEDIS-inspired POC measures"
@@ -52,6 +55,19 @@ ADDITIONAL_DATASET_DATE_FIELDS = (
 
 def _normalized(value: Any) -> str:
     return str(value or "").strip().casefold()
+
+
+def _is_yes(value: Any) -> bool:
+    return _normalized(value) in {"yes", "true", "1", "y"}
+
+
+def _measure_sort_key(measure_id: str) -> tuple[int, str]:
+    return (
+        PREFERRED_MEASURE_ORDER.index(measure_id)
+        if measure_id in PREFERRED_MEASURE_ORDER
+        else len(PREFERRED_MEASURE_ORDER),
+        measure_id,
+    )
 
 
 def _display_category(value: Any) -> str:
@@ -494,6 +510,10 @@ def _worklist(
                 "patient_id": patient_id,
                 "masked_display_name": _mask_name(patient),
                 "cohort": _display_category(patient.get("cohort")),
+                "population_segment": _display_category(
+                    patient.get("population_segment")
+                    or _legacy_population_segment(patient.get("cohort"))
+                ),
                 "attributed_provider_id": provider_id or "Unknown",
                 "provider_name": str(
                     providers_by_id.get(provider_id, {}).get("provider_name") or "Unknown"
@@ -537,11 +557,23 @@ def _worklist(
     return rows
 
 
+def _legacy_population_segment(cohort: Any) -> str:
+    value = str(cohort or "").strip()
+    return {
+        "Diabetes Controlled": "Diabetes",
+        "Diabetes Uncontrolled": "Diabetes",
+        "Preventive Screening Due": "Adult Preventive",
+        "Recently Discharged": "Post-Discharge",
+        "Low Risk Preventive": "General Adult",
+    }.get(value, value or "Unknown")
+
+
 def _dashboard(
     repository: VbcDatasetRepository,
     *,
     as_of_date: date | str | None,
     cohort: str | None,
+    population_segment: str | None,
     provider_id: str | None,
     risk_category: str | None,
     measure_id: str | None,
@@ -559,6 +591,10 @@ def _dashboard(
     claims_all = repository.get_claims()
     documents_all = repository.get_documents()
     measure_results_all = repository.get_measure_results()
+    eligibility_getter = getattr(repository, "get_measure_eligibility", None)
+    measure_eligibility_all = eligibility_getter() if eligibility_getter else []
+    history_getter = getattr(repository, "get_measure_history", None)
+    measure_history_all = history_getter() if history_getter else []
     care_gaps_all = repository.get_care_gaps()
     risk_scores_all = repository.get_risk_scores()
     care_plans_all = repository.get_care_plans()
@@ -609,6 +645,16 @@ def _dashboard(
         )
 
     filtered_patients = list(patients_all)
+    if population_segment is not None:
+        filtered_patients = [
+            row
+            for row in filtered_patients
+            if _display_category(
+                row.get("population_segment")
+                or _legacy_population_segment(row.get("cohort"))
+            )
+            == population_segment
+        ]
     if cohort is not None:
         filtered_patients = [
             row for row in filtered_patients if row.get("cohort") == cohort
@@ -650,6 +696,17 @@ def _dashboard(
         if row.get("patient_id") in filtered_patient_ids
         and (measure_id is None or row.get("measure_id") == measure_id)
     ]
+    filtered_eligibility = [
+        row
+        for row in measure_eligibility_all
+        if row.get("patient_id") in filtered_patient_ids
+        and (measure_id is None or row.get("measure_id") == measure_id)
+    ]
+    has_eligibility_source = bool(
+        getattr(repository, "get_dataset_capabilities", lambda: {})().get(
+            "measure_eligibility", False
+        )
+    ) or bool(measure_eligibility_all)
     filtered_gaps = [
         row
         for row in care_gaps_all
@@ -672,14 +729,53 @@ def _dashboard(
         row for row in encounters_all if row.get("patient_id") in filtered_patient_ids
     ]
 
-    eligible_results = [
-        row
+    eligibility_by_pair = {
+        (row.get("patient_id"), row.get("measure_id")): row
+        for row in filtered_eligibility
+    }
+    result_by_pair = {
+        (row.get("patient_id"), row.get("measure_id")): row
         for row in filtered_measure_results
-        if _normalized(row.get("state")) not in EXCLUDED_MEASURE_STATES
-    ]
-    met_results = [
-        row for row in filtered_measure_results if _normalized(row.get("state")) == "met"
-    ]
+    }
+    if has_eligibility_source:
+        missing_result_count = sum(
+            key not in result_by_pair for key in eligibility_by_pair
+        )
+        missing_eligibility_count = sum(
+            key not in eligibility_by_pair for key in result_by_pair
+        )
+        if missing_result_count or missing_eligibility_count:
+            warnings.append(
+                "Measure eligibility/result pairs do not fully match "
+                f"({missing_result_count} missing result(s), "
+                f"{missing_eligibility_count} missing eligibility row(s))."
+            )
+        eligible_eligibility = [
+            row for row in filtered_eligibility if _is_yes(row.get("eligible"))
+        ]
+        eligible_evaluation_count = len(eligible_eligibility)
+        eligible_keys = {
+            (row.get("patient_id"), row.get("measure_id"))
+            for row in eligible_eligibility
+        }
+        eligible_results = [
+            row
+            for key, row in result_by_pair.items()
+            if key in eligible_keys
+        ]
+        met_results = [
+            row for row in eligible_results if _normalized(row.get("state")) == "met"
+        ]
+    else:
+        eligible_results = [
+            row
+            for row in filtered_measure_results
+            if _normalized(row.get("state")) not in EXCLUDED_MEASURE_STATES
+        ]
+        met_results = [
+            row for row in filtered_measure_results if _normalized(row.get("state")) == "met"
+        ]
+        eligible_evaluation_count = len(eligible_results)
     open_gaps = [
         row
         for row in filtered_gaps
@@ -702,15 +798,23 @@ def _dashboard(
         evidence_completeness = _percentage(
             verified_documents, len(verification_rows)
         )
-    if not eligible_results:
+    if not eligible_evaluation_count:
         warnings.append(
             "No eligible measure evaluations are available for the selected "
             "population; quality performance is reported as 0%."
         )
 
-    measure_ids = sorted(
-        {row.get("measure_id", "") for row in measure_results_all if row.get("measure_id")}
+    measure_ids = {
+        row.get("measure_id", "")
+        for row in measure_results_all
+        if row.get("measure_id")
+    }
+    measure_ids.update(
+        row.get("measure_id", "")
+        for row in measure_eligibility_all
+        if row.get("measure_id")
     )
+    measure_ids = sorted(measure_ids, key=_measure_sort_key)
     if measure_id is not None:
         measure_ids = [item for item in measure_ids if item == measure_id]
     measure_names = {
@@ -718,6 +822,13 @@ def _dashboard(
         for row in measure_results_all
         if row.get("measure_id")
     }
+    measure_names.update(
+        {
+            row.get("measure_id", ""): _display_category(row.get("measure_name"))
+            for row in measure_eligibility_all
+            if row.get("measure_id") and row.get("measure_name")
+        }
+    )
 
     measure_performance = []
     for current_measure_id in measure_ids:
@@ -726,21 +837,52 @@ def _dashboard(
             for row in filtered_measure_results
             if row.get("measure_id") == current_measure_id
         ]
-        measure_eligible = [
+        measure_eligibility = [
             row
-            for row in measure_results
-            if _normalized(row.get("state")) not in EXCLUDED_MEASURE_STATES
+            for row in filtered_eligibility
+            if row.get("measure_id") == current_measure_id
         ]
+        if has_eligibility_source:
+            eligible_measure_eligibility = [
+                row
+                for row in measure_eligibility
+                if _is_yes(row.get("eligible"))
+            ]
+            measure_eligible = [
+                result_by_pair[(row.get("patient_id"), current_measure_id)]
+                for row in eligible_measure_eligibility
+                if (row.get("patient_id"), current_measure_id) in result_by_pair
+            ]
+            eligible_count = len(eligible_measure_eligibility)
+            initial_population_count = sum(
+                _is_yes(row.get("initial_population"))
+                for row in measure_eligibility
+            )
+            excluded_count = sum(
+                _is_yes(row.get("denominator_exclusion"))
+                for row in measure_eligibility
+            )
+        else:
+            measure_eligible = [
+                row
+                for row in measure_results
+                if _normalized(row.get("state")) not in EXCLUDED_MEASURE_STATES
+            ]
+            eligible_count = len(measure_eligible)
+            initial_population_count = len(measure_results)
+            excluded_count = sum(
+                _normalized(row.get("state")) in EXCLUDED_MEASURE_STATES
+                for row in measure_results
+            )
         measure_met = sum(
-            _normalized(row.get("state")) == "met" for row in measure_results
+            _normalized(row.get("state")) == "met" for row in measure_eligible
         )
         measure_gaps = [
             row
             for row in open_gaps
             if row.get("measure_id") == current_measure_id
         ]
-        state_counts = Counter(_normalized(row.get("state")) for row in measure_results)
-        eligible_count = len(measure_eligible)
+        state_counts = Counter(_normalized(row.get("state")) for row in measure_eligible)
         performance_rate = _percentage(measure_met, eligible_count)
         required_met_count = math.ceil(eligible_count * target_rate / 100)
         measure_performance.append(
@@ -748,9 +890,12 @@ def _dashboard(
                 "measure_id": current_measure_id,
                 "measure_name": measure_names.get(current_measure_id, current_measure_id),
                 "total_evaluations": len(measure_results),
+                "initial_population_count": initial_population_count,
                 "eligible_count": eligible_count,
+                "excluded_count": excluded_count,
                 "met_count": measure_met,
                 "open_gap_count": len(measure_gaps),
+                "actionable_count": len(measure_gaps),
                 "uncontrolled_count": state_counts["outcome not controlled"],
                 "evidence_review_count": (
                     state_counts["evidence review"]
@@ -825,6 +970,13 @@ def _dashboard(
         _display_category(risk_by_id.get(patient_id, {}).get("risk_category"))
         for patient_id in filtered_patient_ids
     )
+    population_segments = Counter(
+        _display_category(
+            row.get("population_segment")
+            or _legacy_population_segment(row.get("cohort"))
+        )
+        for row in filtered_patients
+    )
     high_risk_patients = sum(
         _normalized(risk_by_id.get(patient_id, {}).get("risk_category")) == "high"
         or _normalized(patients_by_id[patient_id].get("risk_category")) == "high"
@@ -838,10 +990,10 @@ def _dashboard(
     open_gap_count = len(open_gaps)
     kpis = {
         "total_patients": len(filtered_patient_ids),
-        "eligible_evaluations": len(eligible_results),
+        "eligible_evaluations": eligible_evaluation_count,
         "met_evaluations": len(met_results),
         "quality_performance_rate": _percentage(
-            len(met_results), len(eligible_results)
+            len(met_results), eligible_evaluation_count
         ),
         "open_actionable_care_gaps": open_gap_count,
         "evidence_completeness_rate": evidence_completeness,
@@ -854,12 +1006,56 @@ def _dashboard(
         "outcome_management_cases": outcome_management_cases,
     }
 
+    dataset_metadata_getter = getattr(repository, "get_dataset_metadata", None)
+    dataset_metadata = (
+        dataset_metadata_getter()
+        if dataset_metadata_getter
+        else {
+            "dataset_name": "Synthetic VBC population dataset",
+            "dataset_version": "legacy-1",
+            "patient_count": len(patients_all),
+            "measure_count": len(measure_ids),
+            "dataset_path": "data/synthetic_vbc_dataset.zip",
+            "synthetic_data_notice": summary.get("synthetic_data_notice"),
+            "is_legacy_dataset": not has_eligibility_source,
+            "has_measure_history": bool(measure_history_all),
+        }
+    )
+    filtered_history = [
+        dict(row)
+        for row in measure_history_all
+        if measure_id is None or row.get("measure_id") == measure_id
+    ]
+    for row in filtered_history:
+        parsed_snapshot = _parse_date(row.get("snapshot_date"))
+        row["_snapshot_date"] = parsed_snapshot
+    malformed_history_count = sum(
+        row["_snapshot_date"] is None for row in filtered_history
+    )
+    if malformed_history_count:
+        warnings.append(
+            f"{malformed_history_count} measure-history row(s) have malformed "
+            "snapshot dates and were omitted from the trend."
+        )
+    filtered_history = [
+        {
+            key: value
+            for key, value in row.items()
+            if key != "_snapshot_date"
+        }
+        for row in sorted(
+            (row for row in filtered_history if row["_snapshot_date"] is not None),
+            key=lambda row: (row["_snapshot_date"], _measure_sort_key(row["measure_id"])),
+        )
+    ]
+
     freshness = _freshness_summary(
         repository, resolved_as_of, patient_ids=filtered_patient_ids
     )
     active_filters = {
         "as_of_date": resolved_as_of.isoformat(),
         "cohort": cohort,
+        "population_segment": population_segment,
         "provider_id": provider_id,
         "risk_category": risk_category,
         "measure_id": measure_id,
@@ -870,15 +1066,22 @@ def _dashboard(
     }
     return {
         "metadata": {
+            **dataset_metadata,
             "synthetic_data_notice": str(
-                summary.get("synthetic_data_notice")
+                dataset_metadata.get("synthetic_data_notice")
+                or summary.get("synthetic_data_notice")
                 or "Synthetic VBC POC data. HEDIS-inspired measures. Not for "
                 "clinical care or official quality reporting."
             ),
-            "data_source": "data/synthetic_vbc_dataset.zip",
+            "data_source": dataset_metadata.get("dataset_path")
+            or "data/synthetic_vbc_dataset.zip",
             "as_of_date": resolved_as_of.isoformat(),
-            "measurement_period_start": period_start,
-            "measurement_period_end": period_end,
+            "measurement_period_start": dataset_metadata.get(
+                "measurement_period_start"
+            )
+            or period_start,
+            "measurement_period_end": dataset_metadata.get("measurement_period_end")
+            or period_end,
             "measure_label": MEASURE_LABEL,
             "official_reporting": False,
             "evidence_completeness_method": (
@@ -896,6 +1099,9 @@ def _dashboard(
         "active_filters": active_filters,
         "kpis": kpis,
         "cohort_distribution": _counter_distribution(filtered_patients, "cohort"),
+        "population_segment_distribution": dict(
+            sorted(population_segments.items(), key=lambda item: item[0].casefold())
+        ),
         "risk_distribution": dict(
             sorted(risk_counts.items(), key=lambda item: item[0].casefold())
         ),
@@ -904,6 +1110,22 @@ def _dashboard(
         "priority_worklist": worklist,
         "data_quality_summary": data_quality,
         "freshness_summary": freshness,
+        "measure_history": filtered_history,
+        "provider_distribution": _counter_distribution(
+            [
+                {"provider_id": row.get("attributed_provider_id")}
+                for row in filtered_patients
+            ],
+            "provider_id",
+        ),
+        "outreach_disposition_distribution": _counter_distribution(
+            [
+                row
+                for row in outreach_all
+                if row.get("patient_id") in filtered_patient_ids
+            ],
+            "disposition",
+        ),
         "warnings": list(dict.fromkeys(warnings)),
     }
 
@@ -911,6 +1133,7 @@ def _dashboard(
 def get_population_dashboard(
     as_of_date: date | str | None = None,
     cohort: str | None = None,
+    population_segment: str | None = None,
     provider_id: str | None = None,
     risk_category: str | None = None,
     measure_id: str | None = None,
@@ -930,6 +1153,7 @@ def get_population_dashboard(
         repository,
         as_of_date=as_of_date,
         cohort=cohort,
+        population_segment=population_segment,
         provider_id=provider_id,
         risk_category=risk_category,
         measure_id=measure_id,
