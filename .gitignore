@@ -42,6 +42,11 @@ uploads/
 logs/
 chroma_db/
 *.sqlite3
+Clinical_decision_support/data/supporting_documents.json
+Clinical_decision_support/data/supporting_documents/**
+!Clinical_decision_support/data/supporting_documents/
+!Clinical_decision_support/data/supporting_documents/**/
+!Clinical_decision_support/data/supporting_documents/**/.gitkeep
 
 # Audio, recordings, transcripts, and local runtime data
 *.wav

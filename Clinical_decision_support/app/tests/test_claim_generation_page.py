@@ -1,15 +1,123 @@
+from datetime import date
 from decimal import Decimal
 
 import pytest
 
 from frontend.claim_generation_page import (
+    SAMPLE_PAYER_OPTIONS,
+    SAMPLE_PROVIDER_NPIS,
+    _dob_min_date,
+    _claim_generation_missing_fields,
+    _claim_information_defaults,
     _claim_text,
+    _claim_needs_opd_resplit,
     _find_claim_for_encounter,
     _split_opd_bill,
     build_ambient_bill,
     build_claim_record,
     determine_claim_type,
 )
+
+
+def test_claim_information_provider_options_and_dob_minimum():
+    assert "Emory Healthcare" in SAMPLE_PROVIDER_NPIS
+    assert "Athena Health" not in SAMPLE_PROVIDER_NPIS
+    assert "Athena Health" not in SAMPLE_PAYER_OPTIONS
+    assert "VHC" not in SAMPLE_PAYER_OPTIONS
+    assert _dob_min_date().year == date.today().year - 100
+    assert _dob_min_date(date(2000, 2, 29)) == date(1900, 2, 28)
+
+
+def test_claim_information_defaults_combine_bill_and_encounter_data():
+    bill = {
+        "patient": {
+            "Patient Name": "Bill Patient",
+            "Provider Name": "Bill Provider",
+            "Provider NPI": "1234567890",
+        },
+        "provider": {"Name": "Billing Provider"},
+    }
+    encounter_record = {
+        "DOB": "1980-01-02",
+        "payer": "Demo Health",
+        "member_id": "MEM-123",
+    }
+
+    defaults = _claim_information_defaults(bill, encounter_record)
+
+    assert defaults == {
+        "Patient Name": "Bill Patient",
+        "DOB": "1980-01-02",
+        "Provider Name": "Billing Provider",
+        "Provider NPI": "1234567890",
+        "Payer Name": "Demo Health",
+        "Member ID": "MEM-123",
+    }
+
+
+def test_claim_generation_required_fields_use_manual_form_values():
+    bill = {
+        "patient": {
+            "Patient Name": "Existing Patient",
+            "DOB": "1980-01-02",
+            "Provider Name": "Existing Provider",
+            "Provider NPI": "1234567890",
+        },
+    }
+
+    assert _claim_generation_missing_fields(bill, {
+        "Patient Name": "",
+        "DOB": "",
+        "Provider Name": "",
+        "Provider NPI": "",
+    }) == [
+        "Patient Name is missing.",
+        "DOB is missing.",
+        "Provider Name is missing.",
+        "NPI is missing.",
+    ]
+
+
+def test_build_claim_record_uses_claim_information_form_values():
+    bill = {
+        "encounter_id": "ENC-FORM",
+        "encounter_type": "OPD",
+        "patient": {
+            "Patient ID": "P-FORM",
+            "Provider Name": "Original Provider",
+            "Provider NPI": "0000000000",
+        },
+        "provider": {"Name": "Original Provider", "NPI": "0000000000"},
+        "lines": [{
+            "Service Date": "2026-10-15",
+            "CPT / HCPCS": "71045",
+            "Quantity": 1,
+            "Line Charge ($)": Decimal("113.00"),
+        }],
+        "gross": Decimal("113.00"),
+    }
+
+    claim = build_claim_record(
+        bill,
+        "OPD",
+        claim_information={
+            "Patient Name": "Manual Patient",
+            "DOB": "1980-01-02",
+            "Provider Name": "Manual Provider",
+            "Provider NPI": "1234567890",
+            "Payer Name": "Demo Health",
+            "Member ID": "MEM-123",
+        },
+    )
+
+    assert claim["Patient Information"]["Patient Name"] == "Manual Patient"
+    assert claim["Patient Information"]["DOB"] == "1980-01-02"
+    assert claim["Patient Information"]["Payer"] == "Demo Health"
+    assert claim["Patient Information"]["Member ID"] == "MEM-123"
+    assert claim["Provider Information"] == {
+        "Name": "Manual Provider",
+        "NPI": "1234567890",
+    }
 
 
 def test_build_ambient_bill_reuses_codes_charges_and_encounter_data():
@@ -163,7 +271,7 @@ def test_opd_and_ipd_claims_have_distinct_download_structures():
     assert "Diagnosis Pointers:" not in institutional_text
 
 
-def test_opd_split_claims_use_revenue_code_and_keep_amounts_separate():
+def test_opd_split_routes_only_em_codes_to_professional_claim():
     bill = {
         "encounter_id": "ENC-SPLIT",
         "encounter_type": "OPD",
@@ -177,13 +285,24 @@ def test_opd_split_claims_use_revenue_code_and_keep_amounts_separate():
             },
             {
                 "CPT / HCPCS": "71045",
-                "Revenue Code": "0305",
                 "Service Description": "Chest imaging",
                 "Quantity": 1,
                 "Line Charge ($)": Decimal("2013.00"),
             },
+            {
+                "CPT / HCPCS": "70450",
+                "Service Description": "CT scan",
+                "Quantity": 1,
+                "Line Charge ($)": Decimal("1500.00"),
+            },
+            {
+                "CPT / HCPCS": "80053",
+                "Service Description": "Laboratory panel",
+                "Quantity": 1,
+                "Line Charge ($)": Decimal("75.00"),
+            },
         ],
-        "gross": Decimal("2328.00"),
+        "gross": Decimal("3903.00"),
     }
 
     split_bills = _split_opd_bill(bill)
@@ -192,10 +311,14 @@ def test_opd_split_claims_use_revenue_code_and_keep_amounts_separate():
 
     assert professional["Professional Charges"][0]["CPT/HCPCS Codes"] == ["99213"]
     assert professional["Claim Amount"] == 315.0
-    assert facility["Facility Charges"][0]["CPT/HCPCS Codes"] == ["71045"]
-    assert facility["Revenue Codes"] == ["0305"]
-    assert facility["Total Facility Amount"] == 2013.0
-    assert professional["Claim Amount"] + facility["Total Facility Amount"] == 2328.0
+    assert [charge["CPT/HCPCS Codes"] for charge in facility["Facility Charges"]] == [
+        ["71045"],
+        ["70450"],
+        ["80053"],
+    ]
+    assert facility["Revenue Codes"]
+    assert facility["Total Facility Amount"] == 3588.0
+    assert professional["Claim Amount"] + facility["Total Facility Amount"] == 3903.0
     assert not set(map(id, professional["Professional Charges"])) & set(map(id, facility["Facility Charges"]))
 
 
@@ -209,6 +332,19 @@ def test_encounter_claim_lookup_is_unique_per_claim_type():
     assert _find_claim_for_encounter(claims, "ENC-1", "837P") is claims[0]
     assert _find_claim_for_encounter(claims, "ENC-1", "837I") is claims[1]
     assert _find_claim_for_encounter(claims, "ENC-1", "837D") is None
+
+
+def test_existing_opd_claim_is_marked_stale_for_refresh():
+    expected_bill = {"gross": Decimal("315.00")}
+
+    assert _claim_needs_opd_resplit(
+        {"Claim Amount": 2400.0},
+        expected_bill,
+    )
+    assert not _claim_needs_opd_resplit(
+        {"Claim Amount": 315.0, "OPD Split Version": 2},
+        expected_bill,
+    )
 
 
 def test_claim_record_rejects_total_that_does_not_match_charge_lines():
