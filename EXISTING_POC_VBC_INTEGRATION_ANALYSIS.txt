@@ -1,0 +1,735 @@
+EXISTING POC: VALUE-BASED CARE (VBC) INTEGRATION ANALYSIS
+Repository: Harsh8381/Agent_pod
+Analysis date: 2026-10-22
+
+SCOPE AND PRIVACY
+This is a static, documentation-only analysis of the checked-out working tree.
+No application, configuration, navigation, dependency, dataset, or database files
+were changed. Dataset record values, names, dates of birth, contact details,
+clinical details, and secret values were not copied into this report. The VBC
+archive contains fields for names, DOB, phone, email, and address; treat it as
+sensitive and verify its synthetic status before sharing or operational use.
+The local .env file was not opened. Only configuration variable names found in
+source are listed below.
+
+The worktree was already dirty during inspection. In particular, pre-existing
+changes/untracked items include the claim-generation page and related tests,
+claim validator, supporting-document code/data, and a VBC dataset archive. This
+report describes the available working-tree contents and does not attribute or
+alter those changes.
+
+1. PROJECT TREE
+
+The tree below omits .git, virtual environments, caches, node_modules, generated
+knowledge-base artifacts, logs, local encounter records, runtime SQLite files,
+and patient-specific filenames. It shows code, documentation, and named data
+assets only. Patient-specific SOAP filenames are intentionally masked.
+
+Agent_pod/
+|-- .gitignore
+|-- README.md
+|-- Epic_Inspired_USA_50_Patient_Demo_25_Athena_25_Care_Gap (1).json
+|-- GHCP_PROJECT_SETUP_PROMPT.md
+|-- Healthcare_Coding_Error_POC_25_Athena_25_Care_Gap (1).xlsx
+|-- Hospital_IPD_OPD_Charges_Athena_Care_Gap 3 (1).xlsx
+|-- Hospital_IPD_OPD_Charges_Athena_Care_Gap_3 (1).json
+|-- IPD_25_Patient_Billing_Demo.xlsx
+|-- NuuCare_Admin_SuperAdmin_Concept_Updated 2.pptx
+|-- Clinical_decision_support/
+    |-- .env (present; values not inspected or reproduced)
+    |-- README.md
+    |-- requirements.txt
+    |-- app/
+    |   |-- __init__.py
+    |   |-- __main__.py
+    |   |-- main.py
+    |   |-- llm_client.py
+    |   |-- agent/
+    |   |   |-- __init__.py
+    |   |   |-- ambient_scribe_agent.py
+    |   |   |-- cds_agent.py
+    |   |   |-- context.py
+    |   |   |-- encounter_agent.py
+    |   |-- api/
+    |   |   |-- __init__.py
+    |   |   |-- routes.py
+    |   |   |-- routes_backup_before_full_ehr.py
+    |   |   |-- schemas.py
+    |   |   |-- schemas_backup_before_full_ehr.py
+    |   |-- core/
+    |   |   |-- __init__.py
+    |   |   |-- config.py
+    |   |-- models/
+    |   |   |-- __init__.py
+    |   |   |-- encounter.py
+    |   |-- rag/
+    |   |   |-- __init__.py
+    |   |   |-- chunker.py
+    |   |   |-- embeddings.py
+    |   |   |-- pdf_loader.py
+    |   |   |-- retriever.py
+    |   |   |-- vector_store.py
+    |   |   |-- word_loader.py
+    |   |-- rules/
+    |   |   |-- __init__.py
+    |   |   |-- rule_engine.py
+    |   |-- scripts/
+    |   |   |-- __init__.py
+    |   |   |-- build_kb.py
+    |   |-- services/
+    |   |   |-- __init__.py
+    |   |   |-- clinical_service.py
+    |   |   |-- ehr_demo_service.py
+    |   |   |-- ehr_json_service.py
+    |   |   |-- ehr_json_service.py.backup_before_athena_care_gap_20261007
+    |   |   |-- ehr_json_service.py.backup_before_empty_billing_sheet_cleanup_20261005
+    |   |   |-- ehr_json_service.py.backup_before_reviewed_billing_20261006
+    |   |   |-- soap_service.py
+    |   |   |-- transcription_service.py
+    |   |-- tests/
+    |       |-- test_admin_service.py
+    |       |-- test_agents.py
+    |       |-- test_api.py
+    |       |-- test_approved_soap.py
+    |       |-- test_bill_cpt_selection.py
+    |       |-- test_billing_eligibility.py
+    |       |-- test_billing_scrubber.py
+    |       |-- test_chargemaster.py
+    |       |-- test_claim_generation_page.py
+    |       |-- test_claim_validator.py
+    |       |-- test_clinical_service.py
+    |       |-- test_coding_guardrails.py
+    |       |-- test_cpt_performed_status.py
+    |       |-- test_ehr_json_store.py
+    |       |-- test_rag.py
+    |       |-- test_real_chargemaster.py
+    |       |-- test_split_coders.py
+    |       |-- test_supporting_documents.py
+    |       |-- test_transcript_audit.py
+    |       |-- test_word_loader.py
+    |-- frontend/
+    |   |-- __init__.py
+    |   |-- admin_console.py
+    |   |-- admin_service.py
+    |   |-- api_client.py
+    |   |-- approved_soap.py
+    |   |-- billing_scrubber.py
+    |   |-- chargemaster.py
+    |   |-- claim_generation_page.py
+    |   |-- claim_generator.py
+    |   |-- claim_validator.py
+    |   |-- ipd_billing.py
+    |   |-- streamlit_app.py
+    |   |-- streamlit_app_backup_before_ehr_excel_fix.py
+    |   |-- streamlit_app_backup_before_friend_merge.py
+    |   |-- streamlit_app_backup_before_full_ehr.py
+    |   |-- streamlit_app_friends.py
+    |   |-- supporting_documents.py
+    |   |-- transcript_audit.py
+    |-- data/
+    |   |-- Demo_Hospital_Chargemaster_CDM.xlsx
+    |   |-- supporting_documents.json
+    |   |-- synthetic_vbc_dataset.zip
+    |   |-- approved_soap_notes/ (2 patient-scoped JSON files; filenames masked)
+    |   |-- supporting_documents/
+    |       |-- CT Scan Reports/
+    |       |-- Lab Reports/
+    |       |-- Procedure Notes/
+    |       |-- SOAP Notes/ (patient-scoped files; identifiers masked)
+    |       |-- X-Ray Reports/
+    |-- code_matcher.py
+    |-- cpt_coder.py
+    |-- icd10_coder.py
+    |-- CPT_CODES.json
+    |-- ICD10CM_2022_Codes.json
+    |-- Epic_Inspired_USA_50_Patient_Demo.xlsx
+    |-- Epic_Inspired_USA_50_Patient_Demo.json
+    |-- Epic_Inspired_USA_50_Patient_Demo_Athena_Care_Gap.json
+    |-- Hospital_IPD_OPD_Charges_Athena_Care_Gap.xlsx
+    |-- Hospital_IPD_OPD_Charges_Athena_Care_Gap.json
+    |-- Original_Hospital_IPD_OPD_Charges_200_Demo.xlsx
+    |-- knowledge_base/
+        |-- knowledge_base_harrison.docx
+
+No nested Clinical_decision_support/Agent-pod/ directory was present in the
+enumerated current tree. The README describes a nested/legacy copy, but it is
+not present in this checkout.
+
+2. FRONTEND AND BACKEND ENTRY POINTS
+
+Canonical Streamlit entry point:
+  Clinical_decision_support/frontend/streamlit_app.py
+  Run from Clinical_decision_support:
+  python -m streamlit run frontend/streamlit_app.py
+
+Canonical FastAPI entry point:
+  Clinical_decision_support/app/main.py creates the FastAPI instance and
+  includes app.api.routes.router. app/__main__.py starts Uvicorn with
+  "app.main:app" on 0.0.0.0:8000; run from Clinical_decision_support:
+  python -m app
+
+The frontend client is frontend/api_client.py. Its default backend URL is
+http://127.0.0.1:8000. The README documents using the project interpreter/venv
+for both commands.
+
+3. STREAMLIT NAVIGATION AND CURRENT PAGES
+
+Navigation is custom, not Streamlit's st.navigation/st.Page registry. The
+sidebar buttons in frontend/streamlit_app.py set st.session_state.page, and
+the bottom-level conditional dispatch renders the page. Current navigation:
+  dashboard          Overview
+  new_consult        Consultations
+  ehr_data           EHR Demo Data
+  ipd_billing        IPD Billing
+  claim_generation   Claim Generation
+  review             Clinical Review
+  codes              Codes
+  admin_dashboard    Admin Dashboard (Admin expander)
+  super_admin        Super Admin (Admin expander)
+
+Settings and Help sidebar buttons are present but do not register functional
+pages. There is no Patient 360 or VBC population page today.
+
+4. FASTAPI APPLICATION, ROUTER, SERVICES, AND ROUTES
+
+FastAPI:
+  app/main.py: create_app(), FastAPI application, include_router(router)
+  app/api/routes.py: one APIRouter; no separate router modules were found
+  app/api/schemas.py: Pydantic request/response payload models
+
+Routes defined in app/api/routes.py:
+  GET    /                         API metadata
+  GET    /health                   health response
+  GET    /dev/diagnostics          local paths and patient count; development-only
+  POST   /analyze                  legacy summary analysis/CDS
+  POST   /encounters/analyze       scribe and optional CDS
+  POST   /encounters/scribe        scribe only
+  POST   /encounters/cds           CDS for supplied encounter context
+  POST   /encounters/analyze-audio backend audio upload/transcription
+  POST   /retrieve                 knowledge-base retrieval
+  POST   /codes                    ICD-10 and CPT/HCPCS suggestions
+  GET    /ehr/patients, /patients  patient list (aliases)
+  GET    /patients/export          export all or selected patient's workbook JSON
+  GET    /ehr/patients/{id}, /patients/{id} patient record (aliases)
+  GET    /ehr/patients/{id}/chart, /patients/{id}/chart chart (aliases)
+  GET    /ehr/export               EHR export
+  POST   /ehr/patients, /patients create patient (aliases)
+  PUT    /ehr/patients/{id}, /patients/{id} update patient (aliases)
+  DELETE /ehr/patients/{id}, /patients/{id} delete patient (aliases)
+  GET    /ehr/patients/{id}/records list records, optionally by record_type
+  POST   /ehr/patients/{id}/records add record
+  PUT    /ehr/patients/{id}/records/{record_type} replace record set
+  PUT    /patients/{id}/records/{sheet_name} replace workbook sheet records
+  POST   /patients/{id}/records/{sheet_name} add workbook sheet record
+  GET    /ehr/bills                 list persisted EHR bills, optionally by patient
+  POST   /ehr/patients/{id}/bills   generate EHR bill
+  POST   /patients/{id}/bills/ipd   generate IPD bill
+  POST   /patients/{id}/bills/opd   generate OPD bill
+
+There is no dedicated Claim API, VBC API, Observation API, or Document API.
+Patient/EHR routes dispatch to app/services/ehr_json_service.py. Clinical
+services include app/agent/encounter_agent.py, ambient_scribe_agent.py,
+cds_agent.py, app/services/soap_service.py, clinical_service.py, and
+transcription_service.py. RAG/retrieval is in app/rag/. The separate
+app/services/ehr_demo_service.py implements a SQLite EHR path, but routes.py
+imports the JSON service, not this SQLite service.
+
+5. EXISTING HEALTHCARE WORKFLOW
+
+Active documentation workflow:
+  Streamlit consultation page -> browser audio/local speech recognition or
+  transcript entry -> HealthcareApiClient -> POST /encounters/scribe ->
+  EncounterAgent/AmbientScribeAgent -> SOAP/EncounterContext -> optional
+  POST /encounters/cds -> retrieval/CDS agent -> clinician review/edit ->
+  local consultation record saved to clinical_records.json.
+
+Coding and billing workflow:
+  Review selected record/transcript -> detected clinical insights -> ICD-10
+  and CPT/HCPCS suggestions using local matchers and/or POST /codes -> clinician
+  selection/review -> chargemaster line estimates.
+  The Codes page creates an estimated bill in Streamlit state. The separate
+  IPD Billing page reads IPD workbook encounter/charge lines, validates and
+  creates a session bill. Either bill can populate Claim Generation.
+
+Claim workflow:
+  Claim Generation selects a generated bill by patient/encounter, checks bill
+  arithmetic and supporting documents, gathers patient/provider/payer fields,
+  creates a structured claim record, runs claim/document validation, and offers
+  JSON/text/837-format outputs. frontend/claim_generator.py formats demo 837P
+  or 837I segments. This is a POC artifact, not a verified payer submission or
+  a production X12 clearinghouse integration. Generated claim records and
+  validation reports are session-scoped, not a durable claims ledger.
+
+6. PATIENT MODEL, IDENTIFIERS, SELECTION, AND SOURCE
+
+There is no canonical ORM Patient model. app/api/schemas.py defines
+EhrPatientPayload, a permissive Pydantic payload with optional patient_id, MRN,
+demographic/contact fields and a free-form payload dictionary. The active EHR
+service stores workbook-shaped dictionaries.
+
+The active EHR source is
+Epic_Inspired_USA_50_Patient_Demo_Athena_Care_Gap.json, created from
+Epic_Inspired_USA_50_Patient_Demo.xlsx by app/services/ehr_json_service.py.
+Patient_Master uses Patient_ID and MRN columns. Existing Patient_ID values in
+this source follow a P-plus-digits form; new JSON-store patients use P plus a
+six-digit sequence. The secondary, currently unrouted SQLite service can mint
+PT-prefixed random IDs when a source identifier is missing. Do not mix these
+ID schemes.
+
+The EHR Demo Data selectbox widget key is ehr_patient_selection. It stores the
+visible patient label; the selected patient ID is derived locally from the
+label-to-ID mapping and is not a shared canonical session key. No common
+selected_patient_id key connects all pages. Claim Generation uses its own
+claim_generation_patient widget and generated-bill state. Consultation records
+may contain ehr_patient_id, but a record's own id is also used as fallback in
+some code. No identifier crosswalk was found.
+
+7. ENCOUNTER MODEL AND DATA
+
+app/models/encounter.py defines EncounterContext, not a persisted EHR
+Encounter entity. Fields are transcript, soap_note, patient_summary,
+retrieved_guidelines, recommendations, and metadata. Encounter API request and
+response models inherit/use this context.
+
+The workbook-shaped Encounters records carry Encounter_ID, Patient_ID, Date,
+Type, Department, Provider, Facility, Status, Primary_Diagnosis_Code,
+Primary_Diagnosis, Priority, and Disposition_or_Follow_Up. Related sheet
+records include Problems (ICD-10-CM, clinical/verification status, onset and
+resolved dates), Orders_Procedures (order/encounter IDs, CPT/HCPCS,
+description/status), Vitals, Labs, and Clinical_Notes. These are dictionary
+rows; there are no typed Observation, Condition, Procedure, or Claim models.
+The source encounter IDs are preserved as supplied; no single normalized
+encounter_id format is enforced throughout the application.
+
+The separate IPD Billing workbook has admission/discharge date/time, ward,
+room/bed, length of stay, diagnoses, and charge lines. That is distinct from
+the standard JSON EHR Encounters row. Clinical consultation records have their
+own local id and date/time fields and only link to EHR encounters when
+ehr_encounter_id is supplied.
+
+8. BP, HbA1c, LABS, ADMISSIONS, DISCHARGES, SCREENINGS, HISTORICAL VISITS
+
+The EHR JSON workbook has structured Vitals columns for systolic/diastolic BP
+and other vital signs, and Labs columns for result date, LOINC, test name,
+result, unit, reference range, flag/status, lab, and ordering provider.
+app/rules/rule_engine.py can regex-extract HbA1c and BP only from a text patient
+summary. It flags HbA1c >9 and BP >140/90; it also detects chest-pain language,
+retinal-screening-gap phrases, and allergy phrases. Search shows this rule
+engine is not wired into the active encounter/CDS route, so these checks are
+not current automated EHR measure evaluation.
+
+Admission/discharge data is present in the IPD Billing workbook and can appear
+in claim records/837I output. The standard Encounter row does not provide a
+uniform, explicit admission/discharge event model. No dedicated discharge
+event or readmission model was found.
+
+The EHR has Immunizations and Appointments sheets, but no standardized
+screening-eligibility service. Retinal-screening detection exists only as a
+phrase rule. VBC sample measure outputs include BP Control, Breast Cancer
+Screening, Colorectal Screening, and Glycemic Assessment. The sample output
+rows do not themselves define eligibility/denominator logic.
+
+Historical visits can be read from the Encounters sheet/chart API and from
+clinical_records.json consultation records. Dates are represented differently
+across surfaces (workbook source dates, ISO serialization, and frontend
+dd/mm/YYYY consultation strings). Normalize timezone/date semantics before
+combining or calculating lookback windows. No unified timeline API was found.
+
+9. CLAIM, DOCUMENT, PROVIDER, AND FACILITY STRUCTURES
+
+EHR source claim rows are in Billing_Claims, with claim/patient/encounter IDs,
+service date, CPT/HCPCS, description, units, charge/payment/balance, payer,
+status, and currency fields. The JSON EHR bill path creates Generated_Bills
+and Generated_Bill_Lines sheets, and may append draft line entries to
+Billing_Claims. The active Streamlit Claim Generation claim is a dictionary
+with Claim ID, Encounter ID/Type, Claim Type/Generated Format, Status,
+Claim Amount, Patient Information, Provider Information, codes, Charges,
+Supporting Documents Validation, plus professional (837P) or facility (837I)
+fields. IPD facility fields include admission/discharge dates, revenue codes,
+bill type, and facility charges. EHR bills and Streamlit claims are different
+structures and persistence paths.
+
+Provider data is represented in patient/encounter workbook rows, Care_Team,
+claim provider dictionaries (Name/NPI), and the VBC providers.csv (provider_id,
+provider_name, specialty, npi). Facility data is a string or facility object
+with name/ID; the claim page has demo fallback values. No single Provider or
+Facility model/service exists.
+
+Supporting documents are discovered from
+data/supporting_documents/ folders (SOAP Notes, CT Scan Reports, X-Ray Reports,
+Lab Reports, Procedure Notes), data/supporting_documents.json, and approved
+SOAP-note JSON files. Repository records use document IDs/type/path and
+patient/encounter scope where available. Claim validation maps CPTs to required
+document types and checks available files/record/session content; this is not
+a complete document management or clinical evidence repository.
+
+10. RELEVANT STREAMLIT SESSION STATE
+
+Canonical app keys initialized in streamlit_app.py and their principal use:
+  records: loaded from/saved to clinical_records.json; dashboard, consultation,
+    review, codes, and claim-page encounter lookup.
+  page: custom navigation key; sidebar navigation and page dispatcher.
+  current_record: active consultation selected/opened from dashboard and used
+    by review/codes.
+  scribe_result: in-progress scribe result; consultation workflow.
+  detected_insights, insight_count: transcript-derived insights; review/codes.
+  last_record_id, edit_summary: consultation/review workflow.
+  code_results, code_record_id, code_results_signature,
+  code_matcher_version: per-record code suggestion cache and stale-result
+    check; Codes page and claim bill preparation.
+  code_generation_error: code suggestion UI error.
+  generated_bill, generated_bill_record_id, generated_bill_patient_id:
+    Codes-page bill state.
+  dash_page, chart_cases_page: dashboard pagination.
+  theme, theme_defaults_version: theme and sidebar selector; theme selector's
+    widget key is theme_selector.
+
+Other relevant keys created/consumed by page widgets or helper functions:
+  ehr_patient_selection: EHR Demo Data patient-label selectbox; the actual
+    patient ID is a local variable derived from its option map.
+  admin_ehr_patient_id: one-shot value passed from Admin and popped by EHR
+    Demo Data to select a patient.
+  ipd_billing_encounter: selected IPD workbook encounter.
+  ipd_generated_bill: IPD bill retained in session and registered into claim
+    generation.
+  estimated_hospital_bill: Codes-page estimate read by claim generation.
+  claim_generation_bills: dictionary keyed by source and encounter ID;
+    registered/read by the claim generation helper/page.
+  claim_generation_patient; claim_generation_encounter_<patient-label>:
+    claim page patient/encounter selectors.
+  generated_claim_records: generated claims held in memory in the current
+    Streamlit session; searched/updated by encounter and claim type.
+  claim_validation_reports: claim validation result state.
+  claim_patient_name_<encounter>, claim_patient_dob_<encounter>,
+  claim_provider_name_<encounter>, claim_provider_npi_<encounter>,
+  claim_payer_name_<encounter>, claim_member_id_<encounter>:
+    claim form widgets. Additional document and confirmation widget keys are
+    scoped by encounter.
+
+There is no VBC state namespace or cross-page patient selection state. Admin
+role/user/permission state is maintained by admin_service.py/admin_console.py
+and is not a clinical VBC data source. Transcript audit UI does not provide a
+general append-only business audit trail.
+
+11. CURRENT STORAGE
+
+  CSV: VBC CSV files are inside data/synthetic_vbc_dataset.zip; no active VBC
+    loader/writer was found. The existing application does not write VBC CSVs.
+  JSON: active EHR store is
+    Epic_Inspired_USA_50_Patient_Demo_Athena_Care_Gap.json, initialized from
+    the EHR workbook and rewritten by EHR API mutations. Streamlit consultation
+    records use Clinical_decision_support/clinical_records.json. Other JSON
+    includes coding/reference data, supporting-document metadata, approved
+    SOAP notes, and the two VBC JSON samples in the archive.
+  SQLite: app/services/ehr_demo_service.py defines patients,
+    patient_records, and bills in data/nuucare_ehr_demo.db; the file is present
+    in this working tree, but API routes use ehr_json_service.py instead.
+    Chroma's generated local SQLite database stores retrieval data, not EHR.
+  Excel: workbook-shaped EHR source, IPD billing data, chargemaster, and legacy
+    code/billing demo workbooks.
+  File system: supporting documents, approved SOAP JSON, Word knowledge base,
+    and generated RAG/index artifacts.
+  In-memory: Streamlit session state stores current consultation state,
+    estimated/IPD bills, claim-generation bills, claims, and validation
+    reports. It is not durable across session loss.
+
+EHR JSON updates use a process-local lock and atomic temporary-file replacement.
+This does not coordinate concurrent processes. clinical_records.json uses a
+fixed .tmp sibling and has no visible inter-process lock. Do not add parallel
+CSV writers without a single-writer or transaction strategy.
+
+12. EXISTING TESTS AND COMMANDS
+
+Python tests present under app/tests:
+  test_admin_service.py, test_agents.py, test_api.py, test_approved_soap.py,
+  test_bill_cpt_selection.py, test_billing_eligibility.py,
+  test_billing_scrubber.py, test_chargemaster.py,
+  test_claim_generation_page.py, test_claim_validator.py,
+  test_clinical_service.py, test_coding_guardrails.py,
+  test_cpt_performed_status.py, test_ehr_json_store.py, test_rag.py,
+  test_real_chargemaster.py, test_split_coders.py,
+  test_supporting_documents.py, test_transcript_audit.py, test_word_loader.py.
+
+Documented full-suite command (working directory Clinical_decision_support):
+  python -m pytest -q
+README examples use the project venv interpreter:
+  D:\Agent pod\venv\Scripts\python.exe -m pytest -q
+  D:\Agent pod\venv\Scripts\python.exe -m pytest app/tests/test_api.py -q
+The root README also documents targeted billing tests:
+  python -m pytest app/tests/test_chargemaster.py app/tests/test_real_chargemaster.py app/tests/test_bill_cpt_selection.py app/tests/test_billing_scrubber.py -q
+
+Tests were inventoried, not run; this task changes documentation only.
+
+13. VBC DATASET COMPATIBILITY
+
+data/synthetic_vbc_dataset.zip contains 14 CSV files and two JSON samples.
+CSV schemas/counts (counts only; patient-level values are intentionally
+omitted):
+  patients.csv: 20; patient_id, demographic/contact/coverage fields,
+    attributed_provider_id, risk_category, cohort
+  providers.csv: 9; provider_id, provider_name, specialty, npi
+  encounters.csv: 94; encounter_id, patient_id, encounter_type, provider_id,
+    facility, date, disposition
+  conditions.csv: 54; condition_id, patient_id, icd10_code, description,
+    onset_date, status
+  observations.csv: 109; observation_id, patient_id, type, value, unit, date
+  procedures.csv: 29; procedure_id, patient_id, procedure_code, description,
+    service_date, status
+  claims.csv: 94; claim_id, patient_id, claim_type, service_date, primary_dx,
+    procedure_code, status
+  documents.csv: 121; document_id, patient_id, document_type, document_date,
+    linked_encounter, verification_status
+  measure_results.csv: 80; result_id, patient_id, measure_id, measure_name,
+    state, reason
+  care_gaps.csv: 16; gap_id, patient_id, measure_id, gap_type, priority,
+    owner, due_date, status
+  risk_scores.csv: 20; patient_id, risk_score, risk_category,
+    contributing_factors
+  care_plans.csv: 16; plan_id, patient_id, goal, recommended_action, owner,
+    target_date
+  outreach.csv: 10; outreach_id, patient_id, channel, date, disposition
+  audit_trail.csv: 37; audit_id, patient_id, entity_type, entity_id, action,
+    old_status, new_status, event_timestamp, actor
+
+patient_360_sample.json has patient/cohort/timeline/conditions/claims/
+measure_results/care_gaps/risk_score/care_plans/outreach/audit_trail sections.
+population_dashboard_summary.json contains aggregate distributions and
+operational counts. Neither JSON is an API or application model.
+
+The four distinct sample measure IDs/names are M-BP / BP Control, M-BCS /
+Breast Cancer Screening, M-COL / Colorectal Screening, and M-GA / Glycemic
+Assessment. measure_results.csv supplies states and reasons, not executable
+eligibility, denominator, numerator, lookback, exclusions, or threshold
+definitions. It is sample result data, not a measure specification.
+
+Compatibility check (identifiers only; no values emitted): the VBC archive has
+20 unique patient IDs and 94 unique encounter IDs; its encounter patient
+references resolve within its own patient list. There are zero exact patient
+ID matches and zero exact encounter ID matches against the current
+workbook-backed EHR source. Current EHR Patient_ID values use a different
+P-plus-digits form. No common crosswalk, FHIR mapping, or documented identity
+matching rule was found. Do not match by name/DOB or fuzzy demographics; use an
+approved explicit crosswalk or keep VBC identities isolated.
+
+9 VBC provider IDs, conditions/procedures/claims/documents schemas, and the
+field names are conceptually mappable to the EHR's workbook sheets, but code
+systems, status vocabulary, date semantics, provider IDs, measure definitions,
+and identity keys need mapping/validation. The VBC records are not directly
+loadable by the active EHR JSON service without transformations; no migration
+or import should occur in read-only phases.
+
+14. EXISTING FILES REUSABLE WITHOUT MODIFICATION
+
+For an initial read-only integration:
+  Clinical_decision_support/data/synthetic_vbc_dataset.zip
+    source archive; load CSV/JSON members in memory, do not extract or alter.
+  Clinical_decision_support/frontend/api_client.py
+    existing GET clients for patients, chart, records, bills, and export.
+  Clinical_decision_support/app/api/routes.py
+    existing read-only patient/chart/records/bills/export API endpoints.
+  Clinical_decision_support/app/services/ehr_json_service.py
+    existing JSON-store read functions: list_patients, get_patient_chart,
+    list_patient_records, list_bills, export_patient_data.
+  Clinical_decision_support/app/api/schemas.py and app/models/encounter.py
+    current contracts for the existing loose EHR payload and scribe context.
+  Clinical_decision_support/frontend/supporting_documents.py
+    existing filesystem/manifest document discovery and claim attachment logic.
+  Clinical_decision_support/frontend/claim_validator.py and
+  frontend/claim_generation_page.py
+    current bill/claim/document validation and claim record logic; consume
+    read-only outputs, do not treat as VBC persistence.
+  Clinical_decision_support/frontend/chargemaster.py,
+  frontend/claim_generator.py, frontend/ipd_billing.py
+    existing billing/coding/837 format workflows; do not repurpose for VBC
+    score or measure definitions.
+  Clinical_decision_support/app/rules/rule_engine.py
+    prior art only for basic text BP/HbA1c and retinal-gap detection. It is not
+    active in the API workflow and is not a substitute for approved measures.
+
+15. EXISTING FILES THAT NEED MINIMAL MODIFICATION
+
+To make a VBC page reachable in the existing single-file navigation, the only
+required existing UI file for the first read-only increment is:
+  Clinical_decision_support/frontend/streamlit_app.py
+Add one sidebar route entry, an import, and one dispatch branch for the new
+page. Existing patient/chart API calls do not require client or route changes.
+
+Do not modify app/main.py: it already includes the existing router. Modify
+frontend/api_client.py or app/api/routes.py only if a later, specifically
+approved endpoint cannot be served by existing GET interfaces. Modify
+ehr_json_service.py only for a later explicit persistence/API requirement;
+not for the read-only POC. Do not modify claims, billing, schema, or data
+sources during initial integration.
+
+16. RECOMMENDED NEW FILES
+
+Recommended focused additions; these are proposals, not files created here:
+  Clinical_decision_support/app/vbc/__init__.py
+    package marker.
+  Clinical_decision_support/app/vbc/dataset.py
+    read-only ZIP/CSV/JSON loader, schema checks, and internal referential
+    integrity; no extraction or writes.
+  Clinical_decision_support/app/vbc/evidence.py
+    normalize evidence types/source IDs, units, statuses, dates, provenance,
+    and verification state. Preserve raw-source provenance and unknown values.
+  Clinical_decision_support/app/vbc/measures.py
+    four deterministic evaluators, one per agreed measure ID: M-BP,
+    M-BCS, M-COL, M-GA. Require approved measure definitions, time windows,
+    exclusions, and test vectors before coding thresholds. Do not infer
+    definitions from measure_results.csv or the existing simplistic rule
+    engine.
+  Clinical_decision_support/app/vbc/care_gaps.py
+    derive open gaps from measure outputs and evidence, with explainable reason
+    and provenance.
+  Clinical_decision_support/app/vbc/risk_scoring.py
+    isolated, versioned, deterministic score only after an approved scoring
+    definition exists; otherwise display supplied sample risk_scores as
+    unverified source data.
+  Clinical_decision_support/app/vbc/care_plans.py
+    plan generation/representation and status transitions.
+  Clinical_decision_support/app/vbc/outreach.py
+    outreach records and workflow transitions; no outbound communication in
+    the POC without separate authorization.
+  Clinical_decision_support/app/vbc/audit_trail.py
+    append-only audit events with actor, action, entity, timestamp, and old/new
+    state; do not represent session state as durable audit.
+  Clinical_decision_support/frontend/vbc_patient_360.py
+    patient timeline, diagnoses/conditions, observations, claims, measures,
+    gaps, risk, plans, outreach, and audit presentation.
+  Clinical_decision_support/frontend/vbc_population_dashboard.py
+    aggregate population KPIs and filter/drill-down presentation, never
+    reusing unverified static aggregates after dynamic evaluation is added.
+  Clinical_decision_support/app/tests/test_vbc_dataset.py
+    schema, identity isolation, date/unit normalization, deterministic measure,
+    gap, risk, state-transition, and audit tests using masked synthetic
+    fixtures. Add targeted tests as each module is implemented.
+
+17. SAFE READ-ONLY INTEGRATION POINTS
+
+Existing GET-only interfaces suitable for reading current EHR data:
+  HealthcareApiClient.list_patients() -> GET /patients
+  HealthcareApiClient.get_patient_chart(patient_id) ->
+    GET /patients/{patient_id}/chart
+  HealthcareApiClient.list_patient_records(patient_id, record_type) ->
+    GET /ehr/patients/{patient_id}/records
+  HealthcareApiClient.list_bills(patient_id) -> GET /ehr/bills
+  HealthcareApiClient.export_patient_data(patient_id) ->
+    GET /patients/export or GET /ehr/export
+
+These reads expose workbook-shaped rows; inspect Patient_ID/Encounter_ID and
+filter client-side by exact ID where required. `get_patient_chart` groups
+associated sheets by Patient_ID. Use these only for exact linked entities.
+Do not call POST/PUT/DELETE endpoints from a read-only VBC view. There is no
+read-only document API; use the current supporting-document repository helper
+with its path constraints and treat document contents as sensitive.
+
+Current encounter records, diagnoses, procedures, claims, and observations can
+be read from chart/records endpoints or export when the EHR ID is already
+verified. The session-only ambient encounter record is not automatically an
+EHR encounter; no current encounter synchronization is safe until identity and
+encounter linkage are explicit. Existing codes/claims should remain read-only
+evidence until a reviewed mapping defines their meaning.
+
+18. INTEGRATION RISKS
+
+  Patient-ID mismatch: verified zero exact ID overlap; implicit joining would
+    attribute clinical information to the wrong person.
+  Encounter-ID mismatch: verified zero exact encounter overlap; no common ID
+    contract or crosswalk.
+  Duplicate data: CSV records duplicate facts available in workbook sheets;
+    importing would create competing diagnoses, observations, claims, and
+    timelines.
+  Date/unit/code mismatch: mixed date formats, observation vocabularies,
+    normalized units, ICD/CPT/HCPCS meanings, status and verification values.
+  Static outputs: measure_results, care_gaps, risk_scores, and population
+    summary are supplied result snapshots without complete calculation rules.
+  Hardcoded paths: EHR workbook/JSON paths are project-relative constants;
+    chargemaster supports CHARGEMASTER_PATH and fallback paths; other workflows
+    also refer to named project workbooks. Keep path resolution anchored to
+    project root and do not assume current working directory.
+  Session coupling: generated claims and bills live in Streamlit state; UI
+    state is not a durable source of truth and differs across pages.
+  CSV writes: do not edit CSV members in place or write concurrent CSV results.
+    The current JSON locking is process-local and does not protect multi-process
+    writers.
+  Privacy: archive fields include direct identifiers/contact fields; even
+    files labeled synthetic should be handled as sensitive until verified.
+  Clinical/coding risk: code suggestions, demo chargemaster rates, and generic
+    text rules are not validated measure logic, clinical advice, or claim
+    approval.
+  Deployment boundary: FastAPI binds 0.0.0.0:8000 and no auth controls were
+    found. Keep the POC local/restricted; do not expose new patient endpoints
+    publicly.
+  Audit gap: current transcript display and static VBC audit CSV do not make
+    an immutable production audit system.
+
+19. PHASED INTEGRATION PLAN
+
+Phase 1 - Read-only VBC:
+  Read archive members in memory, validate required headers/internal
+  references, render a separate VBC Patient 360/population view, and keep VBC
+  IDs separate from EHR IDs. No EHR writes, claim writes, CSV changes, or
+  demographic matching. Display source/as-of/provenance and synthetic-data
+  notice.
+
+Phase 2 - Dynamic measure evaluation:
+  Obtain approved specifications for M-BP, M-BCS, M-COL, and M-GA. Define
+  denominator, exclusions, evidence types, lookback, date handling, units,
+  status, threshold, and expected outcomes. Implement pure deterministic
+  functions with tested fixtures; compare to supplied results as a QA signal,
+  not as truth. Version the logic and explain each state.
+
+Phase 3 - Workflow and gap closure:
+  Create explainable care gaps, plans, outreach records, and audit events in an
+  explicitly isolated POC store. Use review/confirmation for status changes.
+  Do not send messages or alter EHR/claims in this phase.
+
+Phase 4 - Current encounter synchronization:
+  Only after a signed-off exact patient/encounter crosswalk and event/consent
+  rules exist, expose read-only encounter evidence and define a tested
+  synchronization boundary. Add narrowly scoped APIs only if required.
+  Preserve source IDs and reconciliation provenance; never merge by names.
+
+Phase 5 - Optional AI summaries:
+  Add optional summarization only after deterministic results are stable.
+  Send minimum necessary data under approved privacy controls, cite source
+  evidence, label generated text, and keep AI output out of measure state,
+  scoring, coding, and durable records unless separately reviewed.
+
+20. FIRST SAFE IMPLEMENTATION TASK AND ROLLBACK
+
+First task: add a read-only VBC Patient 360 page that reads the existing
+synthetic_vbc_dataset.zip in memory and presents only VBC-archive records. It
+must not auto-match to the current EHR, edit/extract archive files, write CSV or
+JSON, create claims, or update patient records. Any identity match should be
+withheld until an approved explicit crosswalk exists.
+
+Exact future file-level changes:
+  ADD Clinical_decision_support/app/vbc/__init__.py
+  ADD Clinical_decision_support/app/vbc/dataset.py
+    Load and validate archive member headers in memory; expose masked/testable
+    functions and preserve source IDs/provenance. Do not print record values
+    into logs.
+  ADD Clinical_decision_support/frontend/vbc_patient_360.py
+    Render selected archive patient and its VBC timeline/measure/gap data only.
+    Keep it read-only and label data source/as-of/synthetic status.
+  ADD Clinical_decision_support/app/tests/test_vbc_dataset.py
+    Use small in-memory fixture archives; test required files/headers, missing
+    fields, no cross-source ID assumptions, and no write/extract side effects.
+  MODIFY Clinical_decision_support/frontend/streamlit_app.py
+    Add one VBC Patient 360 sidebar entry and dispatch branch. Do not alter
+    existing navigation keys or patient selection semantics.
+
+Validation for that task: run the new focused tests and the existing
+claim-generation/API tests most likely to be affected; manually confirm the
+page can read the archive and leave its bytes, EHR JSON, clinical_records.json,
+and SQLite file unchanged. The current documentation analysis itself was not
+tested or executed.
+
+Rollback: remove only the three new files listed above and revert only the
+small VBC navigation/import/dispatch hunks in streamlit_app.py. Do not restore
+or overwrite the whole worktree, dataset archive, or unrelated dirty files.
+Confirm the pre-existing worktree changes remain intact and compare archive and
+database hashes to pre-task values if any manual validation was performed.
+
+END OF ANALYSIS
