@@ -73,3 +73,8 @@ dist/
 # NuuCare user accounts (password hashes, audit log)
 Clinical_decision_support/data/access_control.json
 Clinical_decision_support/data/access_control.tmp
+Clinical_decision_support/data/vbc_state.json
+Clinical_decision_support/data/vbc_state.tmp
+Clinical_decision_support/data/vbc_poc_state.json
+Clinical_decision_support/data/vbc_poc_state.tmp
+Clinical_decision_support/data/vbc_poc_state.lock

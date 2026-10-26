@@ -1,23 +1,32 @@
+from frontend.admin_console import build_admin_workflow_rows
 from frontend.admin_service import (
+    CLINICAL_ROLES,
     DEFAULT_PERMISSIONS,
     MODULES,
     ROLES,
+    VBC_ROLES,
+    VBC_SCREENS,
     add_admin_user,
     ensure_admin_state,
     save_role_permissions,
 )
-from frontend.admin_console import build_admin_workflow_rows
 
 
 def test_admin_roles_have_permission_rows_for_each_module():
-    assert set(ROLES) == {
+    assert set(CLINICAL_ROLES) == {
         "Coding Specialist",
         "RCM Analyst",
         "Clinical Reviewer",
         "Operations Admin",
         "Super Admin",
     }
+    assert set(VBC_ROLES) == {
+        "Physician / APP", "Care Manager", "HEDIS Analyst", "HEDIS Lead", "Abstractor", "Pharmacist",
+        "Stars / Contract", "Executive", "Auditor",
+    }
+    assert list(ROLES) == list(CLINICAL_ROLES) + list(VBC_ROLES)
     assert all(set(DEFAULT_PERMISSIONS[role]) == set(MODULES) for role in ROLES)
+    assert set(VBC_SCREENS.values()) <= set(MODULES)
 
 
 def test_permissions_are_session_scoped_and_editable():

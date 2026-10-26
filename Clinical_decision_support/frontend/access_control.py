@@ -18,9 +18,16 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from frontend.admin_service import ACTIONS, DEFAULT_PERMISSIONS, MODULES, ROLES
+    from frontend.admin_service import (
+        ACTIONS,
+        DEFAULT_PERMISSIONS,
+        MODULES,
+        ROLES,
+        POC_MODULE,
+        VBC_SCREENS,
+    )
 except ModuleNotFoundError:
-    from admin_service import ACTIONS, DEFAULT_PERMISSIONS, MODULES, ROLES
+    from admin_service import ACTIONS, DEFAULT_PERMISSIONS, MODULES, POC_MODULE, ROLES, VBC_SCREENS
 
 PBKDF2_ITERATIONS = 310_000
 MIN_PASSWORD_LENGTH = 8
@@ -47,7 +54,37 @@ PAGE_MODULES = {
     "admin_dashboard": "Admin Dashboard",
     "super_admin": "Super Admin",
     "ehr_data": "EHR Demo Data",
+    # value-based care workspace (one permission module per specification screen)
+    "vbc_stars": VBC_SCREENS["S01"],
+    "vbc_measures": VBC_SCREENS["S02"],
+    "vbc_gaps": VBC_SCREENS["S03"],
+    "vbc_poc": VBC_SCREENS["S04"],
+    "vbc_person": VBC_SCREENS["S05"],
+    "vbc_evidence": VBC_SCREENS["S06"],
+    "vbc_exclusions": VBC_SCREENS["S07"],
+    "vbc_supplemental": VBC_SCREENS["S08"],
+    "vbc_payer": VBC_SCREENS["S09"],
+    "vbc_transitions": VBC_SCREENS["S10"],
+    "vbc_outreach": VBC_SCREENS["S11"],
+    "vbc_versions": VBC_SCREENS["S12"],
+    "vbc_abstraction": VBC_SCREENS["S13"],
+    "vbc_surveys": VBC_SCREENS["S14"],
+    "vbc_value": VBC_SCREENS["S15"],
+    "vbc_governance": VBC_SCREENS["S16"],
+    "vbcpoc_dashboard": POC_MODULE,
+    "vbcpoc_patient": POC_MODULE,
+    "vbcpoc_gaps": POC_MODULE,
+    "vbcpoc_governance": POC_MODULE,
 }
+
+
+def poc_enabled() -> bool:
+    """VBC_POC_ENABLED feature flag; the POC pages disappear when it is off."""
+    try:
+        from app.vbc_poc import enabled
+    except ModuleNotFoundError:
+        return False
+    return enabled()
 
 
 class AuthError(Exception):
@@ -79,7 +116,11 @@ def load_store(path: str | Path) -> dict[str, Any]:
     store.setdefault("audit", [])
     permissions = store.setdefault("role_permissions", {})
     for role in ROLES:
-        permissions.setdefault(role, deepcopy(DEFAULT_PERMISSIONS[role]))
+        stored = permissions.setdefault(role, deepcopy(DEFAULT_PERMISSIONS[role]))
+        # Modules added after this store was saved start from the role's defaults.
+        for module in MODULES:
+            if module not in stored:
+                stored[module] = deepcopy(DEFAULT_PERMISSIONS[role][module])
     permissions[SUPER_ADMIN] = deepcopy(DEFAULT_PERMISSIONS[SUPER_ADMIN])
     return store
 
@@ -282,6 +323,10 @@ def can(store: dict[str, Any], user: dict[str, Any] | None, module: str, action:
 
 
 def can_view_page(store: dict[str, Any], user: dict[str, Any] | None, page: str) -> bool:
+    if page == "vbc_playbook":  # reference material for anyone working in the value-based care workspace
+        return any(can(store, user, module, "View") for module in VBC_SCREENS.values())
+    if page.startswith("vbcpoc_") and not poc_enabled():
+        return False
     module = PAGE_MODULES.get(page)
     return module is None or can(store, user, module, "View")
 
