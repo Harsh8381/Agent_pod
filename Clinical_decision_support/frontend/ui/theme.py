@@ -559,11 +559,125 @@ AUTH_CSS = """
         radial-gradient(circle at 80% 88%, var(--peach_100) 0, transparent 26%),
         var(--bg) !important;
 }
-[data-testid="stForm"] { background: var(--surface); border: 1px solid var(--border) !important; border-radius: 18px !important; box-shadow: var(--shadow-lift); padding: 1.2rem 1.3rem !important; }
-.nc-auth-brand { display: flex; align-items: center; gap: .65rem; margin: 3.5rem 0 1.2rem; }
+[data-testid="stForm"] { background: var(--surface); border: 1px solid var(--border) !important; border-radius: 18px !important; box-shadow: var(--shadow-lift); padding: 1.2rem 1.3rem !important; animation: nc-rise .5s cubic-bezier(.2, .7, .2, 1) .08s both; }
+.nc-auth-brand { display: flex; align-items: center; gap: .65rem; margin: 3.5rem 0 1.2rem; animation: nc-fade .5s ease both; }
 .nc-auth-brand .nc-brand-mark { width: 2rem; height: 2rem; }
 .nc-auth-brand b { display: block; font-size: 1.4rem; color: var(--text); letter-spacing: -.01em; }
 .nc-auth-brand small { display: block; color: var(--faint); font-size: .62rem; font-weight: 700; letter-spacing: .09rem; }
+</style>
+"""
+
+
+# Interaction layer: motion, hover, focus and loading states on top of the pastel system.
+# It reuses the palette tokens only, so it never changes colours, type or shape. Elements
+# animate when they mount; Streamlit keeps unchanged elements across reruns, so a click does
+# not replay the whole page. Everything is switched off for prefers-reduced-motion.
+_MOTION_CSS = """
+<style>
+:root { --ease: cubic-bezier(.2, .7, .2, 1); --ease-spring: cubic-bezier(.34, 1.4, .64, 1); }
+@keyframes nc-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes nc-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes nc-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes nc-pop { 0% { opacity: 0; transform: scale(.92); } 100% { opacity: 1; transform: none; } }
+@keyframes nc-pulse-rose { 0% { box-shadow: 0 0 0 0 rgba(158, 36, 64, .35); } 70% { box-shadow: 0 0 0 7px rgba(158, 36, 64, 0); } 100% { box-shadow: 0 0 0 0 rgba(158, 36, 64, 0); } }
+@keyframes nc-pulse-lav { 0% { box-shadow: 0 0 0 0 rgba(142, 127, 230, .45); } 70% { box-shadow: 0 0 0 8px rgba(142, 127, 230, 0); } 100% { box-shadow: 0 0 0 0 rgba(142, 127, 230, 0); } }
+@keyframes nc-shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+@keyframes nc-spin { to { transform: rotate(360deg); } }
+
+/* ---------- Entrances ---------- */
+.page-heading, .page-kicker, .nc-eyebrow { animation: nc-fade .4s var(--ease) both; }
+.page-heading { animation-name: nc-rise; }
+[data-testid="stMain"] div[data-testid="stVerticalBlockBorderWrapper"], .nc-banner, .nc-table-wrap, .nc-context,
+.nc-banner-card, .nc-stepper, .vbc-tile, .vbc-gap, .vbc-person, .poc-score, .clinical-graph-v2, [class*="st-key-rec_"] {
+    animation: nc-rise .38s var(--ease) both;
+}
+.kpi-card, .nc-tile { animation: nc-rise .42s var(--ease) both; }
+[data-testid="stHorizontalBlock"] > div:nth-child(2) .kpi-card, .nc-tile:nth-child(2) { animation-delay: .05s; }
+[data-testid="stHorizontalBlock"] > div:nth-child(3) .kpi-card, .nc-tile:nth-child(3) { animation-delay: .1s; }
+[data-testid="stHorizontalBlock"] > div:nth-child(4) .kpi-card, .nc-tile:nth-child(4) { animation-delay: .15s; }
+[data-testid="stHorizontalBlock"] > div:nth-child(5) .kpi-card, .nc-tile:nth-child(5) { animation-delay: .2s; }
+.nc-tile:nth-child(n+6) { animation-delay: .25s; }
+.nc-badge, .status-pill { animation: nc-pop .3s var(--ease-spring) both; }
+.insight-chip, .graph-node-card { animation: nc-pop .35s var(--ease-spring) both; }
+.insight-chip:nth-child(2), .graph-node-card:nth-child(2) { animation-delay: .04s; }
+.insight-chip:nth-child(3), .graph-node-card:nth-child(3) { animation-delay: .08s; }
+.insight-chip:nth-child(n+4), .graph-node-card:nth-child(n+4) { animation-delay: .12s; }
+.vbc-fill, .poc-score .track i, .nc-meter span em { transform-origin: left center; animation: nc-grow .8s var(--ease) .1s both; }
+.vbc-verdict { animation: nc-pop .35s var(--ease-spring) both; }
+.nc-table tbody tr { animation: nc-fade .35s var(--ease) both; }
+
+/* ---------- Hover and press ---------- */
+[data-testid="stMain"] div[data-testid="stVerticalBlockBorderWrapper"] { transition: box-shadow .25s var(--ease), border-color .25s var(--ease); }
+[data-testid="stMain"] div[data-testid="stVerticalBlockBorderWrapper"]:hover { box-shadow: var(--shadow-lift); border-color: var(--lav_100) !important; }
+.kpi-card, .vbc-tile, .poc-score, .vbc-gap, .nc-tile, [class*="st-key-rec_"] {
+    transition: transform .22s var(--ease), box-shadow .22s var(--ease), border-color .22s var(--ease), background .22s var(--ease);
+}
+.kpi-card:hover, .vbc-tile:hover, .poc-score:hover, .vbc-gap:hover, [class*="st-key-rec_"]:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+.kpi-card:hover::before { height: 5px; }
+.kpi-card::before { transition: height .2s var(--ease); }
+.nc-tile:hover { background: var(--surface); border-color: var(--lav_300); }
+.nc-table td { transition: background .15s var(--ease), box-shadow .15s var(--ease); }
+.nc-table tbody tr:hover td { background: var(--lav_50); }
+.nc-table tbody tr:hover td:first-child { box-shadow: inset 3px 0 0 var(--lav_400); }
+.nc-table tr.blocked:hover td { background: var(--rose_100); }
+.nc-table tr.blocked:hover td:first-child { box-shadow: inset 3px 0 0 var(--rose_300); }
+[class*="st-key-coderow_"], [class*="st-key-encrow_"] { transition: background .15s var(--ease), box-shadow .15s var(--ease); }
+[class*="st-key-coderow_"]:hover, [class*="st-key-encrow_"]:hover { background: var(--surface_soft); box-shadow: inset 3px 0 0 var(--lav_300); }
+[class*="st-key-dir_"]:hover { border-color: var(--lav_300) !important; transform: translateX(2px); }
+[class*="st-key-dir_"] { transition: border-color .15s, background .15s, transform .2s var(--ease) !important; }
+.nc-check { transition: background .15s var(--ease), padding-left .2s var(--ease); }
+.nc-check:hover { background: var(--surface_soft); padding-left: .3rem; }
+.insight-chip, .graph-node-card { transition: transform .18s var(--ease-spring), box-shadow .18s var(--ease); }
+.insight-chip:hover, .graph-node-card:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(79, 63, 163, .1); }
+.vbc-tick i { transition: transform .2s var(--ease-spring); }
+.vbc-tick:hover i { transform: scale(1.35); }
+.vbc-bars .vbc-track { transition: height .2s var(--ease); }
+.vbc-bars .vbc-track:hover { height: .9rem; }
+
+.stButton > button, .stDownloadButton > button, .stFormSubmitButton > button { transition: background .18s, border-color .18s, box-shadow .18s, transform .12s var(--ease) !important; }
+.stButton > button:active:not(:disabled), .stDownloadButton > button:active:not(:disabled), .stFormSubmitButton > button:active:not(:disabled) { transform: translateY(1px) scale(.985); }
+[data-testid="stMain"] [data-testid="stBaseButton-primary"]:hover:not(:disabled), [data-testid="stMain"] [data-testid="stBaseButton-primaryFormSubmit"]:hover:not(:disabled),
+[data-testid="stMain"] [class*="st-key-accent_"] button:hover:not(:disabled) { transform: translateY(-1px); }
+button:disabled { cursor: not-allowed !important; }
+[data-testid="stSidebar"] .stButton > button { transition: background .15s, color .15s, padding-left .22s var(--ease) !important; }
+[data-testid="stSidebar"] .stButton > button:hover { padding-left: .95rem; }
+[data-testid="stSidebar"] [class*="st-key-nav_on_"] button { transition: box-shadow .25s var(--ease) !important; }
+[data-testid="stMain"] [class*="st-key-topnav_"] button { transition: background .18s, color .18s !important; }
+.nc-brand-mark { transition: transform .6s var(--ease); }
+.nc-brand:hover .nc-brand-mark { transform: rotate(180deg); }
+
+/* ---------- Live signals ---------- */
+.nc-count { animation: nc-pulse-rose 2.4s ease-out infinite; }
+[data-testid="stAudioInput"] button[aria-label="Stop recording"] { border-radius: 50%; animation: nc-pulse-rose 1.6s ease-out infinite; }
+.nc-step.current i { animation: nc-pulse-lav 2.2s ease-out infinite; }
+
+/* ---------- Overlays, tabs, expanders ---------- */
+[data-testid="stPopoverBody"] { animation: nc-pop .18s var(--ease) both; transform-origin: top right; }
+[data-baseweb="popover"] ul[role="listbox"] { animation: nc-fade .15s var(--ease) both; }
+[data-testid="stTabs"] [data-baseweb="tab-highlight"] { transition: left .3s var(--ease), width .3s var(--ease) !important; }
+[data-testid="stTabs"] [role="tabpanel"] { animation: nc-fade .28s var(--ease) both; }
+[data-testid="stMain"] [data-testid="stExpander"] details[open] > summary ~ * { animation: nc-fade .25s var(--ease) both; }
+[data-testid="stMain"] [data-testid="stExpander"] summary svg { transition: transform .2s var(--ease); }
+[data-testid="stAlertContainer"], [data-testid="stToast"] { animation: nc-rise .3s var(--ease) both; }
+
+/* ---------- Loading states ---------- */
+[data-testid="stSpinner"] i, [data-testid="stSpinner"] > div > div:first-child { border-color: var(--lav_100) !important; border-top-color: var(--lav_400) !important; }
+[data-testid="stSkeleton"] {
+    background: linear-gradient(90deg, var(--surface_soft) 25%, var(--lav_50) 50%, var(--surface_soft) 75%) !important;
+    background-size: 200% 100% !important; animation: nc-shimmer 1.4s linear infinite; border-radius: var(--radius-sm);
+}
+/* Dim stale output while a rerun is in flight instead of letting it flash. */
+[data-testid="stMain"] [data-stale="true"] { opacity: .55; transition: opacity .2s var(--ease) .15s; }
+
+/* ---------- Focus and selection ---------- */
+:focus-visible { outline: 2px solid var(--lav_400) !important; outline-offset: 2px; border-radius: 6px; }
+::selection { background: var(--lav_100); color: var(--lav_ink); }
+html { scroll-behavior: smooth; }
+::-webkit-scrollbar-thumb:hover { background: var(--lav_300); }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
 </style>
 """
 
@@ -573,7 +687,7 @@ def css_tokens():
 
 
 def inject_theme():
-    st.markdown(_CSS.replace("__TOKENS__", css_tokens()), unsafe_allow_html=True)
+    st.markdown(_CSS.replace("__TOKENS__", css_tokens()) + _MOTION_CSS, unsafe_allow_html=True)
 
 
 def inject_auth_theme():

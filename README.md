@@ -1,659 +1,350 @@
-# Agent Pod
+# NuuCare — Clinical Decision & Value-Based Care Platform
 
-Agent Pod is a workspace containing related clinical documentation and clinical decision-support prototypes. The canonical runnable application is `Clinical_decision_support/`. It provides a Streamlit interface, FastAPI backend, ambient scribe agent, retrieval-augmented clinical decision support, a local Word knowledge base, and a Coforge LLM integration.
+NuuCare is a full-stack healthcare prototype. It follows a patient visit from the conversation in the exam room to a priced bill and a draft insurance claim, and it tracks population quality for value-based care contracts (HEDIS / Medicare Stars).
 
-This is an educational prototype. It is not a medical device and must not replace a licensed clinician, emergency services, local protocols, or professional clinical judgment.
+It combines an **AI ambient scribe**, **retrieval-augmented clinical decision support (RAG)**, **automated medical coding (ICD-10-CM, CPT/HCPCS)**, **hospital chargemaster billing**, **837P/837I claim drafting with validation**, and a **HEDIS care-gap engine**, all behind a role-based, audited web application.
 
-## Table of Contents
+> **Disclaimer.** This is an educational proof of concept built on synthetic data. It is not a medical device. It must not be used for real patient care, coding, or billing.
 
-- [Repository Scope](#repository-scope)
-- [1. Project Overview](#1-project-overview)
-- [2. Key Features](#2-key-features)
-- [3. High-Level Architecture](#3-high-level-architecture)
-- [4. Repository Layout](#4-repository-layout)
-- [5. Prerequisites](#5-prerequisites)
-- [6. Installation](#6-installation)
-- [7. Configuration](#7-configuration)
-- [8. Running the Canonical Application](#8-running-the-canonical-application)
-- [9. End-to-End Data Flows](#9-end-to-end-data-flows)
-- [10. Knowledge Base and RAG](#10-knowledge-base-and-rag)
-- [11. API Reference](#11-api-reference)
-- [12. Frontend Workflow](#12-frontend-workflow)
-- [Clinical Coding, Billing, and Claims](#clinical-coding-billing-and-claims-poc)
-- [13. Persistence and Runtime Files](#13-persistence-and-runtime-files)
-- [14. Testing](#14-testing)
-- [15. Troubleshooting](#15-troubleshooting)
-- [16. Safe Extension Guide](#16-safe-extension-guide)
-- [17. Security and Privacy](#17-security-and-privacy)
-- [18. Known Limitations](#18-known-limitations)
-- [19. Related and Legacy Projects](#19-related-and-legacy-projects)
+---
 
-## Repository Scope
+## Contents
 
-| Path | Role | Default run path? |
-| --- | --- | --- |
-| `Clinical_decision_support/` | Current CDS and ambient-scribe application | Yes |
-| `Clinical_decision_support/Agent-pod/` | Nested alternate copy/snapshot | No |
+1. [The problem it solves](#1-the-problem-it-solves)
+2. [What it does — end to end](#2-what-it-does--end-to-end)
+3. [Feature tour](#3-feature-tour)
+4. [Architecture](#4-architecture)
+5. [Technology stack](#5-technology-stack)
+6. [How the billing pipeline works](#6-how-the-billing-pipeline-works)
+7. [Value-based care engine](#7-value-based-care-engine)
+8. [Security and access control](#8-security-and-access-control)
+9. [Data](#9-data)
+10. [Project structure](#10-project-structure)
+11. [Running it locally](#11-running-it-locally)
+12. [Configuration](#12-configuration)
+13. [Testing](#13-testing)
+14. [API reference](#14-api-reference)
+15. [Limitations](#15-limitations)
+16. [Project highlights for a CV](#16-project-highlights-for-a-cv)
 
-Run commands from `Clinical_decision_support/` unless a command explicitly says otherwise. The nested copy contains older PDF-oriented code and should not be used accidentally.
+---
 
-## 1. Project Overview
+## 1. The problem it solves
 
-The canonical application supports this workflow:
+After every visit, a clinic has to:
 
-1. A clinician records a consultation in the Streamlit browser UI.
-2. The frontend transcribes browser audio locally with `SpeechRecognition` and Google speech recognition.
-3. The transcript is sent to FastAPI.
-4. `AmbientScribeAgent` asks the Coforge LLM for structured encounter documentation.
-5. The clinician can request CDS recommendations.
-6. `ClinicalDecisionSupportAgent` retrieves relevant chunks from the local Word knowledge base.
-7. Cited evidence is inserted into the CDS LLM prompt.
-8. The frontend displays recommendations and saves the encounter locally as JSON.
+1. **Document** the visit as a SOAP note. Physicians spend hours a day on this.
+2. **Code** it: map diagnoses to ICD-10-CM and services to CPT/HCPCS codes.
+3. **Bill** it: price each service from the hospital's chargemaster.
+4. **Claim** it: build an 837P (professional) or 837I (facility) claim that passes payer edits.
+5. **Close quality gaps**: for value-based contracts, prove that each eligible patient got the screenings and tests that HEDIS measures require.
 
-Input is a transcript or browser-recorded clinical conversation. Output is an `EncounterContext` containing transcript, SOAP note, patient summary, highlights, structured clinical fields, retrieved guidance, and recommendations.
+Each hand-off is a source of lost revenue and compliance risk. A test that was only *recommended* but gets billed is over-billing. A test that was *done* but never coded is lost revenue.
 
-The implementation is local and development-oriented. No authentication, multi-user database, encryption, production audit controls, deployment configuration, or clinical validation workflow is verified in the current codebase.
+NuuCare automates the chain and keeps a human approving every step that matters.
 
-## 2. Key Features
-
-Verified features:
-
-- Streamlit dashboard, consultation, review, draft, and finalization screens.
-- Browser audio capture through `st.audio_input`.
-- Frontend transcription with `SpeechRecognition` and Google speech recognition.
-- Structured ambient-scribe output using `EncounterContext` and JSON parsing.
-- Separate scribe-only, CDS-only, combined, and backend audio API paths.
-- Word paragraph, heading, and table extraction through `python-docx`.
-- Overlapping chunks with source, block, and heading metadata.
-- Sentence Transformer embeddings when available.
-- Sparse TF-IDF fallback when the transformer cannot be downloaded.
-- Persistent Chroma storage for Sentence Transformer mode.
-- Persistent sparse TF-IDF artifacts for offline mode.
-- Candidate retrieval, duplicate filtering, bounded LLM context, and evidence citations.
-- Coforge LLM Router integration with retry handling.
-- Local JSON record persistence.
-- FastAPI health and Swagger endpoints.
-- ICD-10 and CPT/HCPCS code suggestions from detected clinical insights.
-- Automated unit and API tests.
-
-Not verified as active features: automatic OCR, deterministic rule-engine integration into CDS, Docker deployment, CI/CD pipelines, or production observability.
-
-## 3. High-Level Architecture
-
-```mermaid
-flowchart TD
-    User[Clinician] --> UI[Streamlit UI<br/>frontend/streamlit_app.py]
-    UI --> LocalSTT[SpeechRecognition<br/>Google speech recognition]
-    UI --> Client[HealthcareApiClient]
-    Client --> API[FastAPI Backend<br/>app/main.py]
-    API --> Orchestrator[EncounterAgent]
-    Orchestrator --> Scribe[AmbientScribeAgent]
-    Orchestrator --> CDS[ClinicalDecisionSupportAgent]
-    Scribe --> LLM[Coforge LLM Router<br/>app/llm_client.py]
-    CDS --> Retriever[app/rag/retriever.py]
-    Retriever --> Chroma[(Persistent Chroma)]
-    Retriever --> TFIDF[(Sparse TF-IDF artifacts)]
-    CDS --> LLM
-    API --> BackendSTT[Backend audio endpoint<br/>TranscriptionService]
-    UI --> Records[(clinical_records.json)]
-    Builder[app/scripts/build_kb.py] --> Word[knowledge_base/<br/>knowledge_base_harrison.docx]
-    Builder --> Retriever
-```
-
-Layer responsibilities:
-
-- **UI:** `frontend/streamlit_app.py` handles navigation, recording, local transcription, API calls, review, and records.
-- **API:** `app/api/routes.py` validates requests, dispatches agents, and translates failures into HTTP responses.
-- **Orchestration:** `app/agent/encounter_agent.py` coordinates scribe-only, CDS-only, and combined processing.
-- **Agents:** `AmbientScribeAgent` creates documentation; `ClinicalDecisionSupportAgent` retrieves evidence and requests recommendations.
-- **Retrieval:** `app/rag/` loads, chunks, embeds, persists, and queries knowledge.
-- **LLM:** `app/llm_client.py` sends prompts to Coforge with credentials, timeouts, and retries.
-- **Persistence:** Chroma or TF-IDF artifacts store the knowledge base; Streamlit writes local encounter JSON.
-
-## 4. Repository Layout
+## 2. What it does — end to end
 
 ```text
-.
-├── README.md
-├── .gitignore
-├── Clinical_decision_support/
-│   ├── app/
-│   │   ├── __main__.py             # python -m app; starts Uvicorn
-│   │   ├── main.py                 # FastAPI application factory
-│   │   ├── api/routes.py           # HTTP routes
-│   │   ├── api/schemas.py          # Pydantic models
-│   │   ├── agent/                  # context, orchestration, scribe, CDS
-│   │   ├── core/config.py          # .env and paths
-│   │   ├── rag/                    # loaders, chunking, embeddings, retrieval
-│   │   ├── rules/rule_engine.py    # available but not wired into CDS
-│   │   ├── services/               # transcription and legacy services
-│   │   ├── scripts/build_kb.py     # knowledge-base builder
-│   │   └── tests/
-│   ├── frontend/
-│   │   ├── streamlit_app.py        # canonical frontend entry point
-│   │   ├── api_client.py           # Streamlit-to-FastAPI client
-│   │   ├── chargemaster.py         # CPT pricing and revenue-code mapping
-│   │   ├── claim_generator.py      # low-level 837I/837P EDI formatter
-│   │   ├── claim_validator.py      # claim field and total checks
-│   │   ├── claim_generation_page.py # separate bill-to-claim workspace
-│   │   └── ipd_billing.py          # inpatient bill and PDF workflow
-│   ├── knowledge_base/
-│   │   └── knowledge_base_harrison.docx
-│   ├── chroma_db/                  # generated ignored artifacts
-│   ├── requirements.txt
-│   ├── Hospital_IPD_OPD_Charges_Athena_Care_Gap.xlsx
-│   ├── Epic_Inspired_USA_50_Patient_Demo.xlsx
-│   └── clinical_records.json       # local runtime data; ignored
-└── Clinical_decision_support/Agent-pod/ # nested alternate copy
+Patient visit (voice)
+   │  browser microphone → speech-to-text
+   ▼
+Ambient scribe (LLM) ──► SOAP note, summary, highlights
+   │
+   ▼
+Clinical decision support (RAG over a medical textbook) ──► cited recommendations
+   │  clinician reviews and signs the note
+   ▼
+Medical coding ──► ICD-10-CM + CPT/HCPCS suggestions, each linked to evidence in the note
+   │  coder accepts / rejects; pre- and post-coding validation
+   ▼
+Billing guardrail ──► only services documented as PERFORMED are billable
+   │  priced from the hospital chargemaster (Excel / JSON)
+   ▼
+Claim generation ──► draft 837P / 837I, supporting-document checks, claim scrubbing score
 ```
 
-The active import path is `app.*` from the `Clinical_decision_support` directory. Do not mix it with legacy top-level `agent/` and `rag/` packages or the nested copy.
+A second workspace, **Value-Based Care**, evaluates HEDIS measures across a patient population. It opens care gaps, ranks them, drives outreach, and closes a gap only when accepted evidence arrives.
 
-## 5. Prerequisites
+## 3. Feature tour
 
-- Python 3.10 or newer. Python 3.12.10 was used for current verification.
-- Internet access for the Coforge LLM service.
-- Internet access to Google speech recognition for normal frontend transcription.
-- A microphone and browser microphone permission.
-- A Coforge API key, URL, and enabled model name.
-- Disk space for dependencies, the Word source, retrieval artifacts, and optionally a downloaded embedding model.
+The web app has two workspaces, switched from the top bar.
 
-The Sentence Transformer model may require Hugging Face access on first use. Use TF-IDF mode when that access is unavailable.
+### Clinical workspace
 
-## 6. Installation
+| Page | What it does |
+|---|---|
+| **Clinical Overview** | KPIs, activity chart and the consultation queue. |
+| **Consultations** | Pick a patient from the synthetic EHR (or enter one), then record the visit in the browser. The audio is transcribed. |
+| **Clinical Review & CDS** | An LLM drafts the SOAP note. A RAG agent retrieves evidence from the knowledge base and writes cited recommendations. The clinician edits, accepts or rejects them, and signs the note. |
+| **Medication & RTBC** | Active medications, allergy cross-checks and coverage context (a real-time benefit check view). |
+| **Prior Authorization** | Prior-authorization queue for services that need payer approval. |
+| **Coding & HCC** | ICD-10-CM and CPT/HCPCS suggestions with the matching excerpt from the note, HCC (V28) flags, coder accept / reject / query decisions, and pre- and post-coding validation scores. |
+| **Billing & RCM** | The performed-service guardrail, a draft bill priced from the chargemaster, held lines with their prices, coder override, attestation, and hand-off to claims. |
+| **IPD Billing** | Inpatient bills built from a billing workbook: arithmetic, duplicate and total checks, payer / patient shares, PDF export. |
+| **Claim Generation** | Draft 837P and 837I claims (outpatient visits split into professional and facility parts), supporting-document repository checks, and a validation / scrubbing report (sample NCCI, MUE and LCD rules). Downloads as JSON or text. |
+| **Knowledge Base** | Search the RAG index directly. |
+| **EHR Records** | Browse and edit the synthetic EHR (patients, encounters, coverage, labs, claims) through the API. |
+| **Oversight** | Every patient's status across documentation, coding and billing. |
+| **User Access** | Accounts, role-permission matrix, out-of-office fallback coverage, and the audit log. |
 
-### Windows PowerShell
+**OCR.** Scanned lab reports, insurance cards and paper superbills can be uploaded. Text is extracted locally with RapidOCR, and codes on a superbill are pulled straight into the coding workspace.
 
-```powershell
-cd "path\to\Agent pod"
-python -m venv .venv
-& ".\.venv\Scripts\python.exe" -m pip install --upgrade pip
-cd .\Clinical_decision_support
-& "..\.venv\Scripts\python.exe" -m pip install -r requirements.txt
+### Value-based care workspace
+
+| Area | Screens |
+|---|---|
+| **Command** | Stars dashboard with projected star ratings, measure explorer, measure-version center, operating playbook. |
+| **Work the gaps** | Gap workbench with explainable ranking, point-of-care card, person profile, outreach console. |
+| **Prove it** | Evidence panel (eight deterministic evidence checks), exclusion review, supplemental data, payer reconciliation, chart abstraction. |
+| **Care transitions** | Transitions of care, plan all-cause readmission risk, follow-up after ED visit. |
+| **Value & trust** | Survey insights, utilization and value, governance with a hash-chained audit log. |
+| **Quality loop** | A longitudinal proof of concept: population dashboard, Patient 360, care-gap worklist from detection to closure, governance, and golden tests. |
+
+HEDIS measures covered: **GSD** (glycemic status), **CBP** (blood pressure control), **KED** (kidney evaluation), **EED** (eye exam), **BCS-E** (breast cancer screening), **COL-E** (colorectal screening), **SPD** (statin therapy), **COA-FSA**, **AIS-E** (immunizations), **TRC** (transitions of care), **FMC** (follow-up after ED visit), **PCR** (readmissions).
+
+## 4. Architecture
+
+```mermaid
+flowchart LR
+    User[Clinician / Coder / Analyst] --> UI[Streamlit web app<br/>role-based pages]
+    UI -->|HTTP| API[FastAPI backend]
+    UI --> OCR[Local OCR<br/>RapidOCR / ONNX]
+    UI --> Bill[Coding & billing engine<br/>cpt_coder, chargemaster, guardrail]
+    Bill --> CDM[(Hospital chargemaster<br/>Excel / JSON)]
+    API --> Scribe[Ambient scribe agent]
+    API --> CDS[CDS agent]
+    API --> Coding[/codes endpoint]
+    API --> EHR[(Synthetic EHR<br/>JSON store)]
+    API --> VBC[VBC quality-loop engine]
+    Scribe --> LLM[LLM router<br/>Coforge]
+    CDS --> RAG[Retriever]
+    RAG --> KB[(Chroma vectors or<br/>TF-IDF index)]
+    CDS --> LLM
+    UI --> Claims[Claim builder + validator<br/>837P / 837I]
 ```
 
-### Linux or macOS
+Design principles:
 
-```bash
-cd /path/to/Agent\ pod
-python3 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
-cd Clinical_decision_support
-../.venv/bin/python -m pip install -r requirements.txt
-```
+- **AI drafts, humans decide.** The LLM writes the note and recommendations, the coder accepts codes, and the biller attests to the bill. Nothing is billed or claimed automatically.
+- **Deterministic where it matters.** Code matching, the performed-service guardrail, pricing, claim edits and HEDIS evaluation are rule-based, testable and explainable. The LLM is used only for language tasks.
+- **Every decision is traceable.** Code suggestions carry evidence excerpts, guardrail decisions carry reasons, and overrides and permission changes are written to an audit log.
+- **No fabricated numbers.** A service with no chargemaster price is shown as *Unpriced* and left out of the total; it is never guessed.
 
-Use the same interpreter for installation, building, testing, FastAPI, and Streamlit. `python-docx` is required for the current Word source.
+## 5. Technology stack
 
-## 7. Configuration
+| Layer | Technologies |
+|---|---|
+| Frontend | Python, Streamlit, Altair, custom CSS design system |
+| Backend | FastAPI, Uvicorn, Pydantic |
+| AI / LLM | Coforge LLM router (chat completions) for the scribe and CDS |
+| Retrieval (RAG) | ChromaDB + Sentence-Transformers (`all-MiniLM-L6-v2`), offline TF-IDF fallback (scikit-learn), python-docx loader, overlapping chunking |
+| Speech | SpeechRecognition (Google Web Speech) |
+| OCR | RapidOCR on ONNX Runtime, pypdfium2, Pillow, all local |
+| Coding | rapidfuzz fuzzy matching over ICD-10-CM 2022 (44,811 codes) and CPT/HCPCS references; rule-based performed-status classifier |
+| Data | pandas, openpyxl (Excel chargemaster and EHR workbooks), JSON stores |
+| Documents | ReportLab (PDF bills) |
+| Security | PBKDF2-SHA256 password hashing, role-based access control, lockout, audit log |
+| Testing | pytest, Streamlit AppTest: **504 automated tests** |
 
-Create `Clinical_decision_support/.env`. Never commit this file or put real credentials in documentation.
+About 33,000 lines of Python across the backend, frontend and tests.
 
-```dotenv
-COFORGE_API_KEY=your-key
-COFORGE_API_URL=https://your-configured-coforge-endpoint/v2/chat/completions
-COFORGE_MODEL=your-enabled-model
-EMBEDDING_BACKEND=auto
-EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-EMBEDDING_BATCH_SIZE=64
-RETRIEVAL_CANDIDATES=20
-RETRIEVAL_RESULTS=5
-MAX_CONTEXT_CHARS=12000
-```
+## 6. How the billing pipeline works
 
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `COFORGE_API_KEY` | Key sent as `X-API-KEY` | Required for LLM calls |
-| `COFORGE_API_URL` | Coforge chat-completions URL | Required |
-| `COFORGE_MODEL` | Model name in request body | Required |
-| `EMBEDDING_BACKEND` | `auto`, `tfidf`, or `sentence_transformer` | `auto` |
-| `EMBEDDING_MODEL` | Sentence Transformer model or local path | `sentence-transformers/all-MiniLM-L6-v2` |
-| `EMBEDDING_BATCH_SIZE` | Build-time embedding batch size | `64` |
-| `RETRIEVAL_CANDIDATES` | Candidate count | `20` |
-| `RETRIEVAL_RESULTS` | Default final result count | `5` |
-| `MAX_CONTEXT_CHARS` | Maximum retrieved text sent to LLM | `12000` |
+This is the core revenue-cycle logic.
 
-`auto` attempts Sentence Transformers and falls back to sparse TF-IDF if model loading fails. `tfidf` avoids Hugging Face access entirely.
+**1. Candidate discovery.** The coder (`cpt_coder.py`) scans the note for every service in the hospital chargemaster. It understands the way clinicians actually write: "head CT", "EGD", "EKG", "CMP", "PT/INR", "mammogram", "level 4 office visit", "cefazolin given". Specific services take priority over generic mentions, so "CT head" is billed as 70450 and not also as a generic CT. Drugs map to HCPCS J-codes only when documented as administered, never from a home medication list.
 
-The following optional variables customize the related coding and billing data:
+**2. Performed-status classification.** Each mention is classified from the words around it:
 
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `COFORGE_CPT_API_URL` | Optional endpoint for code-suggestion LLM calls | `COFORGE_API_URL` |
-| `COFORGE_CPT_API_KEY` | Optional key for code-suggestion LLM calls | `COFORGE_API_KEY` |
-| `COFORGE_CPT_MODEL` | Optional model for code-suggestion LLM calls | `COFORGE_MODEL` |
-| `CHARGEMASTER_PATH` | Explicit CSV, XLSX, or JSON chargemaster path | Athena Care Gap workbook, then its JSON and the legacy demo workbook |
+| Status | Example | Billable? |
+|---|---|---|
+| performed | "HbA1c was 8.2%", "EGD performed", "cefazolin given" | Yes |
+| recommended / planned | "I recommend an HbA1c test", "plan MRI next week" | No (held) |
+| ordered / pending / declined | "stress test ordered, pending" | No (held) |
+| historical | "colonoscopy 3 years ago" | No (held) |
+| negated | "no chest X-ray today" | No (held) |
 
-Keep local credentials in `Clinical_decision_support/.env`. Never paste a real key into Copilot Chat, commit it, or include it in logs.
+The classifier looks at a window of words around each mention, so a cue elsewhere in a long, unpunctuated voice transcript can't set the status.
 
-## HCC Medical Coding
+**3. Pricing.** Billable codes are priced from the chargemaster workbook (`Hospital_IPD_OPD_Charges_Athena_Care_Gap.xlsx`, or the JSON version):
+- the OPD sheet for outpatient visits and the IPD sheet for inpatient stays;
+- each code is validated against the CDM Master (active status and effective dates);
+- ambiguous or missing rates are reported, never guessed.
 
-The integrated HCC coding engine is kept with the canonical application:
+**4. Coder review.** The Billing page shows every coded service with its price: billable lines in the gross, held lines in a separate "held value". If a service really was done but the note doesn't say so, a coder can confirm it. That override is saved with their username and time, logged, and honored by post-coding validation.
+
+**5. Claim.** After attestation, the bill goes to Claim Generation:
+- outpatient bills split into a professional 837P and a facility 837I (with revenue codes);
+- required supporting documents are checked against a document repository;
+- a scrubbing report scores claim quality (0–100).
+
+All 45 coded services in the chargemaster are covered by an automated test that reads the real workbook. If a service is added to the Excel without coder support, the test fails.
+
+## 7. Value-based care engine
+
+- **Measure engine.** A generic eleven-stage evaluation model: eligibility, denominator, exclusions, evidence normalization, de-duplication, validity, numerator and outcome. It is deterministic and fully traced.
+- **Gap lifecycle.** Gaps are opened, updated, closed and reopened only by the engine after re-evaluation. People move the work forward (assign, outreach, schedule, attach evidence, verify). An order or outreach attempt never closes a gap; only accepted evidence does. Each patient, measure, period and line of work has exactly one gap.
+- **Ten measure states:** `NOT_ELIGIBLE`, `DENOMINATOR_NOT_MET`, `EXCLUDED`, `MET`, `OPEN_GAP`, `OUTCOME_NOT_CONTROLLED`, `EVIDENCE_REVIEW`, `COMPLETED_PENDING_VERIFICATION`, `DATA_QUALITY_ISSUE`, `FOLLOW_UP_REQUIRED`.
+- **Prioritization.** Transparent workload ranking. It is not a clinical prediction model, and every rank is explained.
+- **Care plans and outreach.** Template-based drafts, each of which needs human approval before sending.
+- **Metrics.** Compliance rates, before/after comparison, monthly trends and star projections.
+- **Datasets.** A 20-patient, 12-month longitudinal dataset with deliberate edge cases and golden expected results, plus a configurable 300-patient HEDIS-aligned dataset (patients, encounters, conditions, observations, procedures, claims, documents, eligibility, results, gaps, risk scores, care plans, outreach, audit trail).
+- **Audit.** An append-only, hash-chained audit log: each event stores the hash of the previous one, so tampering is detectable.
+
+## 8. Security and access control
+
+- **Accounts:** first-run bootstrap of a Super Admin, PBKDF2-SHA256 password hashes (never plain text), forced change of temporary passwords, lockout for 15 minutes after 5 failed sign-ins, and a session timeout.
+- **Roles:** 14 roles. There are 5 clinical roles (Coding Specialist, RCM Analyst, Clinical Reviewer, Operations Admin, Super Admin) and 9 VBC roles (Physician/APP, Care Manager, HEDIS Analyst, HEDIS Lead, Abstractor, Pharmacist, Stars/Contract, Executive, Auditor).
+- **Permissions:** a role × module matrix with *View / Edit / Approve / Admin* actions, enforced on every page and on sensitive buttons. For example, only roles with RCM *Approve* can release a claim.
+- **Audit log:** sign-ins, password changes, permission edits, code decisions, billing overrides and claim releases.
+- **Privacy:** OCR runs locally. Only transcript-derived text is sent to the LLM. All data in the repository is synthetic.
+
+## 9. Data
+
+All data is synthetic.
+
+| File | Contents |
+|---|---|
+| `Hospital_IPD_OPD_Charges_Athena_Care_Gap.xlsx` / `.json` | Hospital chargemaster: OPD and IPD charge lines priced for two payers (Athena Health Insurance, Care Gap Health), CDM Master, payer contracts, claim edits, price transparency, router rules |
+| `Epic_Inspired_USA_50_Patient_Demo.xlsx` / `.json` | Synthetic EHR: patients, encounters, coverage, problems, medications, allergies, labs, billing claims |
+| `IPD_25_Patient_Billing_Demo.xlsx` | Inpatient billing encounters |
+| `ICD10CM_2022_Codes.json`, `CPT_CODES.json` | Code reference data |
+| `knowledge_base/knowledge_base_harrison.docx` | Medical knowledge source for RAG (about 6,500 chunks) |
+| `data/vbc_300/synthetic_vbc_dataset_300_hedis.zip` | 300-patient HEDIS dataset |
+| `clinical_records.json` | Consultations saved by the app (runtime, git-ignored) |
+| `data/access_control.json` | Users, hashed passwords, role permissions, audit log (runtime) |
+
+## 10. Project structure
 
 ```text
 Clinical_decision_support/
-├── code_matcher.py
-├── ICD10CM_2022_Codes.json
-├── CPT_CODES.json
-└── icd10.csv
+├── app/                         FastAPI backend
+│   ├── main.py, __main__.py     app factory; `python -m app` starts Uvicorn on :8000
+│   ├── api/                     routes.py (scribe, CDS, RAG, coding, EHR, bills), vbc_routes.py
+│   ├── agent/                   ambient scribe, CDS agent, encounter orchestrator, context model
+│   ├── rag/                     Word/PDF loaders, chunker, embeddings, Chroma/TF-IDF store, retriever
+│   ├── services/                EHR JSON store, transcription, SOAP helpers
+│   ├── vbc/                     300-patient HEDIS dataset loader and population dashboard
+│   ├── vbc_poc/                 quality-loop engine: catalog, engine, evidence, metrics, risk, service
+│   ├── scripts/build_kb.py      builds the RAG index
+│   └── tests/                   504 pytest tests
+├── frontend/                    Streamlit app
+│   ├── streamlit_app.py         entry point
+│   ├── views/                   one module per page (+ views/vbc, views/vbc_poc)
+│   ├── ui/                      theme, shell (navigation), components, session state
+│   ├── encounter_pipeline.py    coding → guardrail → bill (no UI)
+│   ├── chargemaster.py          pricing, CDM validation, revenue codes
+│   ├── claim_generation_page.py 837P/837I claim drafting
+│   ├── claim_validator.py       claim scrubbing / quality score
+│   ├── billing_scrubber.py      over-coding and E/M level checks
+│   ├── coding_validation.py     pre- and post-coding checks
+│   ├── supporting_documents.py  document repository matching
+│   ├── ocr_service.py           local OCR
+│   ├── access_control.py        users, roles, permissions, audit
+│   └── vbc/                     VBC catalog, engine, evidence feeds, stars, store
+├── cpt_coder.py                 CPT/HCPCS coder and performed-status classifier
+├── icd10_coder.py, code_matcher.py   ICD-10-CM matching
+└── requirements.txt
 ```
 
-The review screen classifies detected insights and calls `get_medical_codes()` separately for diagnosis/ICD-10 and procedure/CPT/HCPCS suggestions. Diagnosis terms are not matched against procedure codes, and procedure terms are not matched against diagnosis codes. Results are suggestions for clinician or coder review, not billing authorization or automatic claim submission.
+## 11. Running it locally
 
-The matcher uses `pandas` and `rapidfuzz`, both declared in `Clinical_decision_support/requirements.txt`. Keep the engine and datasets together because the matcher searches its own directory and common working-directory locations.
-
-Verify the integration from `Clinical_decision_support/`:
+**Prerequisites:** Python 3.10+ (developed on 3.12). Coforge LLM credentials are needed only for the scribe and CDS; coding, billing, claims and VBC work offline.
 
 ```powershell
-& "..\.venv\Scripts\python.exe" -c "from code_matcher import get_medical_codes; print(get_medical_codes(['Hypertension', 'Tuberculosis', 'Chest x-ray 2 views', 'Complete blood count'], threshold=90))"
-```
+cd Clinical_decision_support
+python -m venv ..\.venv
+..\.venv\Scripts\python -m pip install -r requirements.txt
 
-The current mapping returns representative suggestions including `I10` for general hypertension, `A15` for tuberculosis, `71046` for a two-view chest X-ray, and `85025` for a complete blood count. Review coding datasets and payer rules before using results operationally.
-
-## 8. Running the Canonical Application
-
-### Build the Word knowledge base
-
-Run after installation or whenever the source document changes.
-
-Windows:
-
-```powershell
-cd .\Clinical_decision_support
+# one-time: build the RAG index (TF-IDF needs no model download)
 $env:EMBEDDING_BACKEND = "tfidf"
-& "..\.venv\Scripts\python.exe" -m app.scripts.build_kb
+..\.venv\Scripts\python -m app.scripts.build_kb
 ```
 
-Linux/macOS:
-
-```bash
-cd /path/to/Agent\ pod/Clinical_decision_support
-EMBEDDING_BACKEND=tfidf ../.venv/bin/python -m app.scripts.build_kb
-```
-
-The builder resets the `medical_knowledge` collection before inserting new data. The current Harrison document produced approximately 6,510 chunks; the count changes with document content.
-
-### Start FastAPI
-
-Windows:
+Start the two services in separate terminals, both from `Clinical_decision_support/`:
 
 ```powershell
-cd .\Clinical_decision_support
-& "..\.venv\Scripts\python.exe" -m app
+# Terminal 1 — backend on http://localhost:8000 (API docs at /docs)
+..\.venv\Scripts\python -m app
+
+# Terminal 2 — frontend on http://localhost:8501
+..\.venv\Scripts\python -m streamlit run frontend/streamlit_app.py
 ```
 
-Linux/macOS:
+On first launch the app asks you to create the Super Admin account.
 
-```bash
-cd /path/to/Agent\ pod/Clinical_decision_support
-../.venv/bin/python -m app
-```
+**Try the billing flow.** Start a consultation and say something like *"HbA1c was 8.1 percent today, head CT was done, EKG obtained"*. Then go to **Coding & HCC → Billing & RCM**: each service appears priced from the chargemaster. Attest, send to RCM, and generate the claim.
 
-The backend binds to `0.0.0.0:8000`. Keep this terminal running.
+## 12. Configuration
 
-### Start Streamlit
+Create `Clinical_decision_support/.env` and never commit it.
 
-In a second terminal:
+| Variable | Purpose | Default |
+|---|---|---|
+| `COFORGE_API_KEY`, `COFORGE_API_URL`, `COFORGE_MODEL` | LLM for scribe and CDS | required for LLM features |
+| `COFORGE_CPT_API_KEY`, `COFORGE_CPT_API_URL`, `COFORGE_CPT_MODEL` | Optional separate LLM for coding | falls back to the above |
+| `EMBEDDING_BACKEND` | `auto`, `tfidf` or `sentence_transformer` | `auto` |
+| `EMBEDDING_MODEL`, `EMBEDDING_BATCH_SIZE` | Embedding model and batch size | `all-MiniLM-L6-v2`, `64` |
+| `RETRIEVAL_CANDIDATES`, `RETRIEVAL_RESULTS`, `MAX_CONTEXT_CHARS` | RAG tuning | `20`, `5`, `12000` |
+| `CHARGEMASTER_PATH` | Chargemaster file (CSV, XLSX or JSON) | the Athena / Care Gap workbook |
+| `NUUCARE_ENCOUNTER_TYPE` | Default chargemaster sheet (`OPD`/`IPD`) | `OPD` |
+| `VBC_DATASET_PATH` | VBC dataset zip | bundled synthetic dataset |
+| `VBC_POC_ENABLED`, `VBC_POC_TARGET_RATE` | Quality-loop feature flag and target compliance rate | see `app/vbc_poc` |
+
+## 13. Testing
 
 ```powershell
-cd .\Clinical_decision_support
-& "..\.venv\Scripts\python.exe" -m streamlit run frontend/streamlit_app.py
+cd Clinical_decision_support
+..\.venv\Scripts\python -m pytest app/tests -q
 ```
 
-Linux/macOS:
-
-```bash
-cd /path/to/Agent\ pod/Clinical_decision_support
-../.venv/bin/python -m streamlit run frontend/streamlit_app.py
-```
-
-Open the URL printed by Streamlit, normally `http://localhost:8501`. The frontend calls `http://127.0.0.1:8000`.
-
-Verify the backend:
-
-```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -Method Get
-```
-
-Expected response: `{"status":"ok"}`. Swagger is at `http://127.0.0.1:8000/docs`.
-
-## 9. End-to-End Data Flows
-
-### Startup
-
-`python -m app` executes `app/__main__.py`, which starts Uvicorn with `app.main:app`, host `0.0.0.0`, and port `8000`. `app.main` creates FastAPI and registers `app.api.routes.router`.
-
-### Streamlit to backend
-
-```text
-st.audio_input
-  -> SpeechRecognition / recognize_google
-  -> HealthcareApiClient.scribe_encounter
-  -> POST /encounters/scribe
-  -> AmbientScribeAgent.transcribe
-  -> Coforge LLM
-  -> EncounterContext
-  -> optional HealthcareApiClient.add_cds
-  -> POST /encounters/cds
-  -> ClinicalDecisionSupportAgent.analyze_context
-  -> retrieve_documents
-  -> Coforge LLM
-  -> recommendations and retrieved_guidelines
-  -> clinical_records.json
-```
-
-The normal frontend path transcribes audio locally and does not call `/encounters/analyze-audio`.
-
-### Ambient scribe
-
-`AmbientScribeAgent.transcribe()` requests JSON containing SOAP note, patient summary, highlights, chief complaint, HPI, medical history, medications, assessment, and plan. Markdown JSON fences are accepted. The result becomes an `EncounterContext`.
-
-### CDS
-
-`ClinicalDecisionSupportAgent.analyze_context()` sends `patient_summary` to `retrieve_documents()`. The cited result is saved as `retrieved_guidelines` and sent with the summary to the LLM. The response is saved as `recommendations`.
-
-### LLM
-
-`app/llm_client.py` sends system/user messages, model, and temperature `0.3` to Coforge. It uses `X-API-KEY`, a 15-second connect timeout, a 120-second read timeout, and retries HTTP 502, 503, and 504 up to three times. The expected response contains `choices[0].message.content`.
-
-## 10. Knowledge Base and RAG
-
-### Source and extraction
-
-The current source is `Clinical_decision_support/knowledge_base/knowledge_base_harrison.docx`. `app/rag/word_loader.py` extracts non-empty paragraphs and tables and carries the latest Word heading into each block. Word files do not reliably expose printed page numbers through `python-docx`; citations use source filename, block, and heading.
-
-`app/rag/pdf_loader.py` remains compatibility code for PDF extraction and short-page OCR detection. The active builder is Word-based. Automatic OCR is not implemented.
-
-### Index build
-
-`app/scripts/build_kb.py`:
-
-1. Loads Word blocks.
-2. Splits blocks into approximately 1,200-character chunks with 150-character overlap.
-3. Generates normalized Sentence Transformer embeddings in batches, or sparse TF-IDF vectors offline.
-4. Resets the persistent `medical_knowledge` collection.
-5. Stores Sentence Transformer embeddings in Chroma, or TF-IDF artifacts and JSON chunk metadata offline.
-6. Writes `chroma_db/embedding_backend.txt` so retrieval uses the same backend.
-
-### Retrieval
-
-`app/rag/retriever.py` reads the backend marker:
-
-- **Sentence Transformer:** embeds the query and calls Chroma nearest-neighbor search.
-- **TF-IDF:** loads the sparse matrix and vectorizer, computes cosine similarity without densifying the matrix, and selects persisted chunks.
-
-Both modes deduplicate highly overlapping chunks. Results are limited by `RETRIEVAL_RESULTS`; formatted context is limited by `MAX_CONTEXT_CHARS`. Returned evidence includes citations such as `Source: knowledge_base_harrison.docx, block 17`.
-
-### Verify RAG independently
-
-```powershell
-$body = @{ query = "hypertension blood pressure treatment"; top_k = 3 } | ConvertTo-Json
-Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8000/retrieve" `
-  -Method Post `
-  -ContentType "application/json" `
-  -Body $body
-```
-
-RAG is returning evidence when `context` contains the knowledge-base filename and block/section citations. A CDS encounter should contain the same content in `retrieved_guidelines`.
-
-## 11. API Reference
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/` | API metadata and links |
-| `GET` | `/health` | Health check |
-| `POST` | `/analyze` | Legacy patient-summary analysis |
-| `POST` | `/encounters/scribe` | Scribe-only processing |
-| `POST` | `/encounters/analyze` | Combined scribe and optional CDS |
-| `POST` | `/encounters/cds` | Add CDS to an existing context |
-| `POST` | `/encounters/analyze-audio` | Backend transcription and analysis |
-| `POST` | `/retrieve` | Retrieval without an LLM |
-
-### Scribe request
-
-```json
-{
-  "transcript": "Patient reports a cough for two days.",
-  "include_cds": false
-}
-```
-
-### Combined request
-
-```json
-{
-  "transcript": "Patient reports a cough for two days.",
-  "include_cds": true
-}
-```
-
-### Retrieval request
-
-```json
-{
-  "query": "hypertension blood pressure treatment",
-  "top_k": 3
-}
-```
-
-Response:
-
-```json
-{
-  "query": "hypertension blood pressure treatment",
-  "top_k": 3,
-  "context": "Source: knowledge_base_harrison.docx, block 17\n..."
-}
-```
-
-`top_k` accepts 1 through 20. The legacy `/analyze` route does not use RAG; use `/retrieve`, `/encounters/cds`, or `/encounters/analyze` with CDS enabled.
-
-`/encounters/analyze-audio` accepts multipart form data with a `file` field. It is available but is not the normal Streamlit path.
-
-## 12. Frontend Workflow
-
-`frontend/streamlit_app.py` provides:
-
-- **Dashboard:** local records, status, analytics, and record navigation.
-- **New Consultation:** select an existing synthetic EHR patient or enter patient metadata, choose encounter type, and record browser audio.
-- **Transcription:** `SpeechRecognition.recognize_google`.
-- **Scribe:** `/encounters/scribe` generates a structured note and highlights.
-- **CDS:** `/encounters/cds` retrieves cited local knowledge-base context and requests recommendations.
-- **Review:** inspect the source transcript, regenerate SOAP or CDS, edit the summary, add supported manual insights, and save or finalize the note.
-- **Codes:** review ICD-10-CM and CPT/HCPCS suggestions derived from the encounter and documentation.
-- **EHR demo data:** browse synthetic patients, charts, and workbook-shaped records exposed by the local API.
-- **IPD billing:** choose an inpatient encounter from the billing workbook, inspect charge lines and validation messages, generate a bill, and download a PDF.
-- **Claim Generation:** a separate sidebar page for selecting a patient and generated encounter bill, reviewing its patient/coding/charge details, creating a draft claim record, and downloading it as JSON or text.
-- **Admin:** view the admin dashboard and edit demo roles and permission settings. These are UI prototypes, not security controls.
-- **Persistence:** local encounter drafts and finalization use `clinical_records.json`; the EHR API initializes a workbook-shaped JSON store from the synthetic EHR workbook when needed.
-
-`frontend/api_client.py` defaults to `http://127.0.0.1:8000` and uses a 180-second request timeout. The UI has no authentication or access control.
-
-### Clinical Coding, Billing, and Claims (POC)
-
-The **Codes** page supplies consultation-based estimates and bill generation:
-
-1. Choose the consultation and whether the estimate uses the OPD or IPD chargemaster sheet.
-2. Select the CPT/HCPCS candidates to include; all candidates are selected initially. **Calculate Bill** uses the selected codes, their quantities, and matching chargemaster rates. Unmatched or ambiguous rates remain unpriced and are called out; they are not fabricated.
-3. The generated estimate is made available to the separate **Claim Generation** workspace; Codes does not generate claims.
-
-The **IPD Billing** page is a separate workbook-backed workflow. It checks encounter identifiers, dates, code references, charge-line arithmetic, duplicate lines, and encounter totals before generating and displaying the bill and its estimated payer/patient shares. Its share percentages come from the synthetic workbook. It does not generate claims.
-
-The **Claim Generation** page lists generated bills in the current Streamlit session, lets the user select a patient and encounter, and displays patient details, available ICD-10 and CPT/HCPCS codes, charge lines, and total bill amount. **Generate Claim** creates a simple record with a generated Claim ID, Encounter ID, automatically determined claim type (`837P` for OPD/professional; `837I` for IPD/hospital), draft status, total, and bill details. The summary table and JSON/TXT downloads are for POC review and are not standards-compliant X12 claim files or payer submissions.
-
-Estimates and claim records are demonstrations only. Gross chargemaster charges are not a negotiated allowance, benefits determination, or finalized patient responsibility. Coding suggestions require professional review.
-
-## 13. Persistence and Runtime Files
-
-| Path | Purpose | Git status |
-| --- | --- | --- |
-| `clinical_records.json` | Frontend-local consultation records | Ignored |
-| `Epic_Inspired_USA_50_Patient_Demo_Athena_Care_Gap.json` | Workbook-shaped local EHR demo store, initialized from the synthetic workbook | Local runtime store |
-| `Hospital_IPD_OPD_Charges_Athena_Care_Gap.xlsx` | Default OPD/IPD chargemaster and revenue-code reference | Source workbook |
-| `IPD_25_Patient_Billing_Demo.xlsx` | Synthetic encounters and charges for IPD billing | Source workbook |
-| `chroma_db/` | Generated retrieval artifacts | Ignored |
-| `logs/` | Runtime logs if used | Ignored |
-| `uploads/` | Runtime uploads if used | Ignored |
-| `.env` | Local configuration and secrets | Ignored |
-| `knowledge_base/knowledge_base_harrison.docx` | Current source document | Present in workspace; tracking status must be checked |
-
-The frontend uses relative `clinical_records.json`; start Streamlit from `Clinical_decision_support/`. Builder and retrieval paths are derived from `app/core/config.py` and use `Clinical_decision_support/chroma_db/`.
-
-The root `.gitignore` excludes environments, `.env`, databases, uploads, logs, transcripts, summaries, history, and clinical records. Review sample data before sharing the repository.
-
-## 14. Testing
-
-From `Clinical_decision_support/`:
-
-```powershell
-& "..\.venv\Scripts\python.exe" -m pytest app\tests -q
-```
-
-Linux/macOS:
-
-```bash
-../.venv/bin/python -m pytest app/tests -q
-```
-
-The suite covers API health and mocked encounter flows, retrieval and Word loading, coding guardrails, CPT selection and procedure status, chargemaster pricing and revenue mapping, IPD billing, EHR JSON persistence, transcript audit behavior, and admin helpers.
-
-Run the focused workflow tests, for example:
-
-```powershell
-& "..\.venv\Scripts\python.exe" -m pytest app\tests\test_chargemaster.py app\tests\test_real_chargemaster.py app\tests\test_bill_cpt_selection.py app\tests\test_billing_scrubber.py -q
-```
-
-Automated tests do not verify real Coforge calls, microphone recording, Google speech recognition, browser interaction, or payer acceptance of draft EDI. Review the specific tests available in `app/tests/` before relying on a behavior.
-
-## 15. Troubleshooting
-
-### Cannot connect to FastAPI
-
-```powershell
-cd .\Clinical_decision_support
-& "..\.venv\Scripts\python.exe" -m app
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/health"
-```
-
-Check that another process is not using port 8000 and that the correct `.venv` interpreter is used.
-
-### `No module named app`
-
-Run from `Clinical_decision_support`, not the workspace parent.
-
-### `No module named docx`
-
-```powershell
-& "..\.venv\Scripts\python.exe" -m pip install -r requirements.txt
-```
-
-### Hugging Face `SSL: WRONG_VERSION_NUMBER`
-
-```powershell
-$env:EMBEDDING_BACKEND = "tfidf"
-& "..\.venv\Scripts\python.exe" -m app.scripts.build_kb
-```
-
-This uses sparse TF-IDF and requires no model download.
-
-### Old PDF path appears
-
-Confirm the current directory is `Clinical_decision_support` and that you are not running `Clinical_decision_support/Agent-pod/`. The canonical builder uses `knowledge_base/knowledge_base_harrison.docx`.
-
-### Missing or empty knowledge base
-
-Rebuild, restart FastAPI, and test `/retrieve` before testing CDS:
-
-```powershell
-& "..\.venv\Scripts\python.exe" -m app.scripts.build_kb
-& "..\.venv\Scripts\python.exe" -m app
-```
-
-### `/health` works but CDS fails
-
-Health only confirms FastAPI is alive. CDS additionally requires valid Coforge variables, network access, a populated knowledge base, and a response containing `choices[0].message.content`.
-
-### Audio fails
-
-Check browser microphone permission, supported audio format, internet access to Google speech recognition, and that the audio can be read by `SpeechRecognition.AudioFile`. The backend audio endpoint is separate.
-
-### Scanned Word pages
-
-`python-docx` does not OCR embedded images. OCR scanned pages before indexing. Automatic OCR is not verified in this codebase.
-
-## 16. Safe Extension Guide
-
-### API changes
-
-1. Add or update Pydantic models in `app/api/schemas.py`.
-2. Add routes in `app/api/routes.py`.
-3. Keep provider, retrieval, and persistence logic in their existing layers.
-4. Add mocked route tests.
-5. Preserve the `app` import path and project working directory.
-
-### Encounter changes
-
-- Update `EncounterContext` when adding fields.
-- Keep documentation logic in `AmbientScribeAgent`.
-- Keep CDS logic in `ClinicalDecisionSupportAgent`.
-- Change `EncounterAgent` only for orchestration changes.
-- Update frontend serialization if fields must persist.
-
-### Retrieval changes
-
-- Keep loading, chunking, embedding, persistence, and querying under `app/rag/`.
-- Preserve citation metadata.
-- Keep the backend marker synchronized with persisted artifacts.
-- Never densify a large sparse TF-IDF matrix.
-- Rebuild after source, chunking, or embedding changes.
-
-### Deterministic rules
-
-`app/rules/rule_engine.py` contains checks for HbA1c, blood pressure, chest pain, retinal screening gaps, and medication allergies. Static inspection shows it is not called by the active encounter/CDS flow. Integrate it explicitly and add tests before describing it as active CDS behavior.
-
-### Provider changes
-
-Keep Coforge request formatting in `app/llm_client.py`. Never put credentials in frontend code, source files, logs, exceptions, or documentation. Preserve the response contract or update callers and tests together.
-
-## 17. Security and Privacy
-
-- Treat transcripts, patient metadata, records, and recommendations as sensitive.
-- Never commit `.env`, API keys, tokens, or real patient records.
-- Local JSON records have no encryption or access control.
-- The active API has no authentication or authorization.
-- Coforge receives transcript-derived and CDS prompts; verify organizational data-handling requirements.
-- Google speech recognition is used by the normal frontend path; verify acceptability for the deployment context.
-- Inspect the nested `Clinical_decision_support/Agent-pod/` snapshot before reuse; it contains older alternate code and configuration.
-
-## 18. Known Limitations
-
-- Educational prototype with no clinical validation or medical-device controls.
-- No authentication, authorization, encryption, multi-user storage, or production audit trail.
-- LLM quality and availability depend on Coforge configuration and network access.
-- Browser transcription depends on Google speech recognition.
-- Automatic OCR is not implemented.
-- Word citations use blocks/headings rather than reliable printed page numbers.
-- The rule engine is not integrated into active CDS.
-- Admin roles and permissions are in-memory UI demo state; they do not enforce authorization.
-- The current Claim Generation page exports JSON/TXT records, not X12 EDI. The separate low-level EDI formatter is not exposed by this page and is not a complete X12 implementation or submission service.
-- Claim records are held in Streamlit session state and are not persisted as a durable billing or claims ledger.
-- The Claim Generation page exports a POC JSON/TXT summary, not X12 EDI.
-- Chargemaster coverage varies by encounter type and code; an unpriced line blocks claim generation until resolved.
-- Retrieval tests do not establish clinical retrieval quality.
-- The builder resets the collection instead of using versioned or incremental swaps.
-- Frontend record path depends on the process working directory.
-- No Docker, Compose, or CI/CD configuration was found.
-
-## 19. Related and Legacy Projects
-
-### `Clinical_decision_support/Agent-pod/`
-
-A nested alternate copy with older PDF-oriented defaults. It is not the canonical tree for commands run from top-level `Clinical_decision_support/` and should be treated as an archive or alternate snapshot until ownership is clarified.
-
-### Legacy packages
-
-The active application uses `app.agent.*` and `app.rag.*`. Legacy top-level `agent/` and `rag/` modules also exist; do not import them into new active routes without intentionally verifying compatibility.
-
-## Project Status
-
-The canonical application combines Streamlit, FastAPI, an ambient scribe agent, a retrieval-backed CDS agent, a Word knowledge base, optional Sentence Transformer embeddings, offline TF-IDF retrieval, Chroma persistence, and a Coforge LLM integration. Use the limitations and security guidance above before considering deployment beyond local development.
+The 504 tests cover:
+- API routes and mocked agent flows, retrieval and the Word loader;
+- the performed-status classifier and coding guardrails;
+- chargemaster pricing against the real workbook, revenue codes, billing scrubbing;
+- claim building and validation, supporting documents, IPD billing;
+- EHR persistence, OCR parsing, access control;
+- the VBC engines, including golden-patient expectations.
+
+Real LLM calls, microphone capture and payer acceptance are not covered by automated tests.
+
+## 14. API reference
+
+Interactive docs: `http://localhost:8000/docs`.
+
+| Area | Endpoints |
+|---|---|
+| Health | `GET /`, `GET /health`, `GET /dev/diagnostics` |
+| Scribe & CDS | `POST /encounters/scribe`, `POST /encounters/cds`, `POST /encounters/analyze`, `POST /encounters/analyze-audio`, `POST /analyze` |
+| RAG | `POST /retrieve` |
+| Coding | `POST /codes` (ICD-10-CM + CPT/HCPCS from conditions, procedures and note text) |
+| EHR | `GET/POST /ehr/patients`, `GET/PUT/DELETE /ehr/patients/{id}`, `GET /ehr/patients/{id}/chart`, records CRUD, `GET /ehr/export` |
+| Bills | `GET /ehr/bills`, `POST /patients/{id}/bills/opd`, `POST /patients/{id}/bills/ipd` |
+| VBC quality loop (`/vbc`) | `GET /meta`, `POST /evaluate/{patient_id}`, `POST /evaluate-population`, `GET /patients`, `GET /patients/{id}/360`, gaps, evidence verification, outreach (create / approve / send / outcome), care plans, `GET /dashboard`, `GET /audit`, `POST /reset` |
+
+## 15. Limitations
+
+- Proof of concept on synthetic data, with no clinical validation.
+- Claims are draft JSON/TXT records, not standards-compliant X12 EDI, and are not submitted to payers. Generated claims live in the browser session.
+- NCCI, MUE and LCD edits use small local sample rules, not payer rule sets.
+- Prices come from the encounter's own chargemaster sheet. A code that exists only on the other sheet shows as *Unpriced*.
+- Quantities default to 1. Time-based codes and drug units are not derived from the note.
+- E/M level selection is not automated; a level must be documented.
+- Speech recognition and the LLM need network access.
+- `app/rules/rule_engine.py` exists but is not wired into CDS.
+- No Docker or CI/CD configuration yet.
+
+## 16. Project highlights for a CV
+
+> **NuuCare — AI Clinical Documentation, Coding & Value-Based Care Platform** (Python, FastAPI, Streamlit, RAG, LLMs)
+>
+> - Built a full-stack healthcare platform that covers the patient encounter → SOAP note → ICD-10/CPT coding → chargemaster billing → 837P/837I claim pipeline, plus a HEDIS value-based care workspace (about 33k lines of Python, 504 automated tests).
+> - Developed an LLM ambient scribe and a retrieval-augmented clinical decision support agent (ChromaDB + Sentence-Transformers with an offline TF-IDF fallback) that produce evidence-cited recommendations from a medical textbook.
+> - Engineered a rule-based performed-status classifier and billing guardrail. It separates performed, recommended, ordered, historical and negated services in free-text notes, so only documented services are billed.
+> - Mapped all 45 coded services in a hospital chargemaster (labs, imaging, cardiology, endoscopy, therapy, drugs, implants, E/M levels) to CPT/HCPCS codes from natural clinical phrasing, validated against the live workbook in tests.
+> - Implemented claim drafting with professional/facility split, supporting-document validation and claim scrubbing with a 0–100 quality score.
+> - Designed a deterministic HEDIS measure engine (GSD, CBP, BCS-E, COL-E, KED, EED, TRC, FMC, PCR and more) with a care-gap lifecycle, explainable prioritization, human-approved outreach and a hash-chained, tamper-evident audit log.
+> - Secured the app with role-based access control (14 roles, View/Edit/Approve/Admin), PBKDF2 password hashing, account lockout and full audit logging. Added local, privacy-preserving OCR for scanned documents and superbills.
+
+**Skills demonstrated:** LLM application design, RAG, NLP and rule-based clinical text classification, healthcare revenue-cycle domain knowledge (ICD-10, CPT/HCPCS, CDM, 837P/837I, NCCI), HEDIS / value-based care, REST API design, RBAC and security, data engineering with pandas and Excel, automated testing.

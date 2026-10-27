@@ -145,8 +145,8 @@ def post_coding_checks(
     not_performed = [
         row["code"] for row in cpt
         if row.get("status") == "Accepted" and row.get("code") not in EM_CODES
-        # A provider-marked superbill line is attestation that the service was rendered.
-        and row.get("procedure_status") not in {"performed", "superbill", None}
+        # A provider-marked superbill line, or a coder's billing override, attests the service was rendered.
+        and row.get("procedure_status") not in {"performed", "superbill", "coder_confirmed", None}
     ]
     if not_performed:
         checks.append(_check("Accepted services performed", FAIL, "Accepted but not documented as performed: " + ", ".join(not_performed)))

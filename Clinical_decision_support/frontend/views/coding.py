@@ -170,10 +170,14 @@ def build_code_rows(record, code_results):
         from_superbill = item.get("source") == "ocr_superbill"
         if from_superbill and procedure_status != "performed":
             procedure_status = "superbill"
+        elif procedure_status != "performed" and code in (record.get("billing_overrides") or {}):
+            procedure_status = "coder_confirmed"
         if code in EM_MDM_LEVELS:
             auto_status = "E/M check"
         elif procedure_status == "superbill":
             auto_status = "Superbill"
+        elif procedure_status == "coder_confirmed":
+            auto_status = "Coder confirmed"
         else:
             auto_status = {
                 "performed": "Performed",

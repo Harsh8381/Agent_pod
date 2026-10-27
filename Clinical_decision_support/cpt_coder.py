@@ -97,13 +97,126 @@ DOCUMENTATION_PROCEDURE_ALIASES = {
     "12 lead electrocardiogram with interpretation": "12 lead ecg with interpretation",
 }
 
+
+def _service(code: str, description: str, category: str) -> dict[str, str]:
+    return {"code": code, "description": description, "code_system": "CPT/HCPCS", "service_category": category}
+
+
+# Services priced in the hospital chargemaster (OPD / IPD charge sheets) that the fallbacks above
+# do not cover. Keys are the canonical names infer_documented_procedures emits and are matched
+# exactly, so a generic mention ("MRI") never lands on a specific service ("MRI brain").
+CHARGEMASTER_CPT_SERVICES = {
+    "upper gi endoscopy": _service("43235", "Diagnostic upper GI endoscopy", "Endoscopy"),
+    "colonoscopy": _service("45378", "Diagnostic colonoscopy", "Endoscopy"),
+    "ct head": _service("70450", "CT head without contrast", "Radiology"),
+    "mri brain": _service("70551", "MRI brain without contrast", "Radiology"),
+    "ct chest with contrast": _service("71260", "CT chest with contrast", "Radiology"),
+    "knee x ray": _service("73560", "X-ray exam of knee, 1 or 2 views", "Radiology"),
+    "screening mammography": _service("77067", "Screening mammography, bilateral", "Radiology"),
+    "prothrombin time": _service("85610", "Prothrombin time / INR", "Laboratory"),
+    "psychotherapy": _service("90834", "Psychotherapy, 45 minutes", "Behavioral Health"),
+    "hemodialysis": _service("90935", "Hemodialysis procedure", "Dialysis"),
+    "ecg": _service("93005", "12-lead ECG, tracing only", "Cardiology"),
+    "stress test": _service("93017", "Cardiovascular stress test, tracing only", "Cardiology"),
+    "nebulizer treatment": _service("94640", "Nebulizer treatment", "Respiratory"),
+    "therapeutic infusion": _service("96365", "Therapeutic IV infusion, initial hour", "Infusion"),
+    "chemotherapy infusion": _service("96413", "Chemotherapy IV infusion, initial hour", "Chemotherapy"),
+    "therapeutic exercise": _service("97110", "Therapeutic exercise, each 15 minutes", "Rehabilitation"),
+    "physical therapy evaluation low complexity": _service("97161", "Physical therapy evaluation, low complexity", "Rehabilitation"),
+    "physical therapy evaluation": _service("97162", "Physical therapy evaluation, moderate complexity", "Rehabilitation"),
+    "occupational therapy evaluation": _service("97165", "Occupational therapy evaluation, low complexity", "Rehabilitation"),
+    "nutrition assessment": _service("97802", "Medical nutrition therapy, initial assessment", "Nutrition"),
+    "orthopedic fixation screw": _service("C1713", "Orthopedic fixation screw (implant)", "Implants"),
+    "cefazolin injection": _service("J0690", "Cefazolin 1 g injection", "Pharmacy"),
+    "vancomycin injection": _service("J3370", "Vancomycin 500 mg injection", "Pharmacy"),
+    "normal saline infusion": _service("J7030", "Normal saline 1,000 mL", "Pharmacy"),
+    **{
+        f"office visit level {level}": _service(f"9921{level}", f"Established patient office visit, level {level}", "Evaluation and Management")
+        for level in range(2, 6)
+    },
+    **{
+        f"emergency department visit level {level}": _service(f"9928{level}", f"Emergency department visit, level {level}", "Evaluation and Management")
+        for level in range(1, 6)
+    },
+}
+
+_CHARGEMASTER_PHRASES = {
+    "upper gi endoscopy": ("upper gi endoscopy", "upper endoscopy", "egd", "esophagogastroduodenoscopy"),
+    "colonoscopy": ("colonoscopy",),
+    "ct head": ("ct head", "head ct", "ct of the head", "ct of head", "ct scan of the head", "ct scan of head",
+                "ct scan head", "ct brain", "computed tomography head"),
+    "mri brain": ("mri brain", "brain mri", "mri of the brain", "mri of brain", "mri head"),
+    "ct chest with contrast": ("ct chest with contrast", "chest ct with contrast", "ct of the chest with contrast",
+                               "ct scan of the chest with contrast", "ct scan of chest with contrast", "contrast ct chest",
+                               "contrast enhanced ct chest"),
+    "knee x ray": ("knee x ray", "x ray of the knee", "x ray of knee", "x ray knee"),
+    "screening mammography": ("mammogram", "mammography", "screening mammogram"),
+    "prothrombin time": ("prothrombin time", "pt inr", "inr"),
+    "psychotherapy": ("psychotherapy",),
+    "hemodialysis": ("hemodialysis", "dialysis"),
+    "ecg": ("ecg", "ekg", "electrocardiogram", "12 lead ecg", "12 lead ekg"),
+    "stress test": ("stress test",),
+    "nebulizer treatment": ("nebulizer", "nebuliser", "neb treatment", "nebulized"),
+    "therapeutic infusion": ("therapeutic infusion", "iv infusion", "intravenous infusion", "infusion therapy"),
+    "chemotherapy infusion": ("chemotherapy infusion", "chemo infusion", "chemotherapy"),
+    "therapeutic exercise": ("therapeutic exercise", "therapeutic exercises"),
+    "physical therapy evaluation low complexity": ("physical therapy evaluation low complexity",
+                                                   "low complexity physical therapy evaluation",
+                                                   "physical therapy initial evaluation low complexity",
+                                                   "pt evaluation low complexity", "low complexity pt evaluation"),
+    "physical therapy evaluation": ("physical therapy evaluation", "physiotherapy evaluation", "pt evaluation"),
+    "occupational therapy evaluation": ("occupational therapy evaluation", "ot evaluation"),
+    "nutrition assessment": ("nutrition assessment", "nutritional assessment", "dietitian assessment",
+                             "dietary assessment", "medical nutrition therapy"),
+    "orthopedic fixation screw": ("fixation screw", "fixation screws", "orthopedic screw", "orthopedic screws",
+                                  "orthopaedic screw", "bone screw", "bone screws"),
+    "cefazolin injection": ("cefazolin", "ancef"),
+    "vancomycin injection": ("vancomycin",),
+    "normal saline infusion": ("normal saline", "saline bolus", "ns bolus"),
+    **{
+        f"office visit level {level}": (f"office visit level {level}", f"clinic visit level {level}",
+                                        f"outpatient visit level {level}", f"level {level} office visit",
+                                        f"level {level} clinic visit", f"level {level} outpatient visit")
+        for level in range(2, 6)
+    },
+    **{
+        f"emergency department visit level {level}": (f"emergency department visit level {level}", f"ed visit level {level}",
+                                                      f"er visit level {level}", f"emergency visit level {level}",
+                                                      f"level {level} emergency department visit", f"level {level} ed visit",
+                                                      f"level {level} er visit")
+        for level in range(1, 6)
+    },
+}
+DOCUMENTATION_PROCEDURE_ALIASES.update(
+    {phrase: procedure for procedure, phrases in _CHARGEMASTER_PHRASES.items() for phrase in phrases}
+)
+DOCUMENTATION_PROCEDURE_ALIASES.update({
+    "echocardiogram": "complete transthoracic echocardiogram",
+    "transthoracic echocardiogram": "complete transthoracic echocardiogram",
+    "tte": "complete transthoracic echocardiogram",
+    "cmp": "comprehensive metabolic panel",
+    "bmp": "basic metabolic panel",
+})
+
+# Generic mentions that a more specific service of the same kind replaces, e.g. "CT scan" when
+# "CT head" is also documented, so one service is not billed twice under two codes.
+GENERIC_PROCEDURE_TERMS = {
+    "ct scan": "ct",
+    "mri": "mri",
+    "ultrasound": "ultrasound",
+    "physical therapy": "physical therapy",
+    "injection": "injection",
+    "office visit": "visit",
+    "established patient office visit": "visit",
+}
+
 _cpt_dataframe = None
 
 PROCEDURE_KEYWORDS = ("x ray", "x-ray", "scan", "surgery", "biopsy", "therapy", "injection", "procedure", "endoscopy", "ultrasound", "mri", "ct", "cbc", "a1c", "hba1c", "blood test", "blood culture", "urine culture", "troponin", "office visit")
 
 _PROCEDURE_STATUS_CUES = re.compile(
     r"\b(?:performed|completed|done|obtained|administered|collected|underwent|"
-    r"ordered|order|requested|planned|plan|recommend(?:ed)?|consider(?:ed)?|"
+    r"given|infused|implanted|placed|inserted|ordered|order|requested|planned|plan|recommend(?:ed)?|consider(?:ed)?|"
     r"discuss(?:ed|ion)?|pending|declined|cancelled|canceled|history|historical|"
     r"previous|prior|previously|remote|not|never|without|no|possible|may|"
     r"needed|rule\s+out|results?|demonstrate|show|reveal|indicate)\b",
@@ -124,6 +237,7 @@ def _canonicalize_procedure_text(value: Any) -> str:
     text = str(value or "").lower()
     text = re.sub(r"\b(?:c\s*\.?\s*x\s*\.?\s*r\.?)\b", "chest x ray", text)
     text = re.sub(r"\bchest\s+(?:x\s*[- ]?\s*ray|radiographs?)\b", "chest x ray", text)
+    text = re.sub(r"\bx\s*[- ]?\s*ray\s+exam,?\s+chest\b", "chest x ray", text)
     return text
 
 
@@ -140,6 +254,11 @@ def _procedure_aliases(term: Any) -> tuple[str, ...]:
         aliases.update({"a1c", "a1c test", "hba1c", "hba1c test", "hemoglobin a1c"})
     if normalized in {"office visit", "established patient office visit"}:
         aliases.update({"office visit", "patient evaluated", "patient was evaluated"})
+    # Canonical service names ("ct head") are documented in other words ("head CT", "CT scan of the head").
+    aliases.update(
+        normalize_text(phrase) for phrase, procedure in DOCUMENTATION_PROCEDURE_ALIASES.items()
+        if normalize_text(procedure) == normalized
+    )
     return tuple(sorted(aliases, key=len, reverse=True))
 
 
@@ -149,6 +268,23 @@ def _contains_procedure_term(clause: str, aliases: tuple[str, ...]) -> bool:
         re.search(rf"\b{re.escape(alias)}\b", normalized_clause)
         for alias in aliases
     )
+
+
+_STATUS_WINDOW_WORDS = 10
+
+
+def _procedure_windows(clause: str, aliases: tuple[str, ...]) -> list[str]:
+    """Words around each mention of the procedure, so a cue elsewhere in an unpunctuated
+    transcript ("smoking history ... I recommend HbA1c test") does not set its status."""
+    words = normalize_text(_canonicalize_procedure_text(clause)).split()
+    windows = []
+    for alias in aliases:
+        alias_words = alias.split()
+        size = len(alias_words)
+        for start in range(len(words) - size + 1):
+            if words[start:start + size] == alias_words:
+                windows.append(" ".join(words[max(0, start - _STATUS_WINDOW_WORDS):start + size + _STATUS_WINDOW_WORDS]))
+    return windows
 
 
 def _contains_any_procedure(clause: str) -> bool:
@@ -224,7 +360,8 @@ def _classify_procedure_clause(clause: str) -> str:
         return "planned"
 
     performed_action = re.search(
-        r"\b(?:performed|completed|done|obtained|administered|collected|underwent)\b",
+        r"\b(?:performed|completed|done|obtained|administered|collected|underwent|"
+        r"given|infused|implanted|placed|inserted)\b",
         text,
     )
     result_evidence = re.search(
@@ -233,7 +370,14 @@ def _classify_procedure_clause(clause: str) -> str:
         text,
     )
     encounter_evaluation = re.search(r"\bpatient (?:was )?evaluated\b", text)
-    if performed_action or result_evidence or encounter_evaluation:
+    # A lab reported with a measured value ("HbA1c was 8.2%") was run, but "A1c in 3 months" is not a result.
+    lab_value = re.search(
+        r"\b(?:hemoglobin a1c|hba1c|a1c|cbc|complete blood count|troponin|blood glucose|inr|prothrombin time)"
+        r"(?: (?:test|level|result|value)){0,2}(?: (?:is|was|of|at|came back(?: at)?))? \d+(?: \d+)?"
+        r"(?! (?:days?|weeks?|months?|years?|times?)\b)",
+        text,
+    )
+    if performed_action or result_evidence or encounter_evaluation or lab_value:
         return "performed"
     if re.search(r"\b(?:ordered|requested)\b", text):
         return "ordered_not_performed"
@@ -247,9 +391,9 @@ def classify_procedure_status(term: Any, evidence: str = "") -> str:
         return "unknown"
 
     statuses = [
-        _classify_procedure_clause(clause)
+        _classify_procedure_clause(window)
         for clause in _split_procedure_context(_canonicalize_procedure_text(evidence))
-        if _contains_procedure_term(clause, aliases)
+        for window in _procedure_windows(clause, aliases)
     ]
     if "performed" in statuses:
         return "performed"
@@ -324,12 +468,38 @@ def normalize_detected_procedures(detected_procedures: Any) -> list[str]:
 
 def infer_documented_procedures(documentation: str) -> list[str]:
     """Infer candidate services from documentation; this does not validate performance."""
-    normalized_documentation = normalize_text(documentation)
+    remaining = normalize_text(_canonicalize_procedure_text(documentation))
     inferred = []
     for phrase, procedure in sorted(DOCUMENTATION_PROCEDURE_ALIASES.items(), key=lambda item: len(item[0]), reverse=True):
-        if phrase in normalized_documentation and procedure not in inferred:
-            inferred.append(procedure)
+        pattern = rf"\b{re.escape(normalize_text(phrase))}\b"
+        if re.search(pattern, remaining):
+            # Mask the match so a shorter phrase inside it ("ecg" in "12 lead ecg with interpretation") is not inferred too.
+            remaining = re.sub(pattern, " ", remaining)
+            if procedure not in inferred:
+                inferred.append(procedure)
     return inferred
+
+
+def drop_superseded_procedures(items: list[str]) -> list[str]:
+    """Drop generic mentions ("CT scan") when a specific service of the same kind ("ct head") is present."""
+    normalized = [normalize_text(item) for item in items]
+    kept = []
+    for item, key in zip(items, normalized):
+        token = GENERIC_PROCEDURE_TERMS.get(key)
+        if token and any(
+            other != key and other not in GENERIC_PROCEDURE_TERMS and re.search(rf"\b{token}\b", other)
+            for other in normalized
+        ):
+            continue
+        kept.append(item)
+    return kept
+
+
+def _chargemaster_service(item: str) -> dict[str, Any] | None:
+    service = CHARGEMASTER_CPT_SERVICES.get(normalize_text(item))
+    if service is None:
+        return None
+    return {"extracted_item": item, "code": service["code"], "description": service["description"], "_score": 100.0, "source": "chargemaster"}
 
 
 def _find_json_file() -> Path | None:
@@ -455,7 +625,7 @@ def _fallback_for(item: str) -> dict[str, Any] | None:
 
 def get_cpt_codes(detected_procedures: Any, threshold: float = DEFAULT_THRESHOLD, max_matches: int = DEFAULT_MAX_MATCHES) -> list[dict[str, str]]:
     logger.debug("CPT raw input procedures=%r", detected_procedures)
-    items = normalize_detected_procedures(detected_procedures)
+    items = drop_superseded_procedures(normalize_detected_procedures(detected_procedures))
     logger.debug("CPT raw input count=%d", len(items))
     if not items:
         return []
@@ -464,8 +634,10 @@ def get_cpt_codes(detected_procedures: Any, threshold: float = DEFAULT_THRESHOLD
     max_matches = max(1, int(max_matches))
     results = []
     for item in items:
-        dataset_matches = _dataset_matches(item, dataframe, threshold, max_matches)
-        selected = dataset_matches[0] if dataset_matches else None
+        selected = _chargemaster_service(item)
+        if selected is None:
+            dataset_matches = _dataset_matches(item, dataframe, threshold, max_matches)
+            selected = dataset_matches[0] if dataset_matches else None
         if selected is None:
             fallback = _fallback_for(item)
             if fallback is not None:
@@ -478,11 +650,12 @@ def get_cpt_codes(detected_procedures: Any, threshold: float = DEFAULT_THRESHOLD
 
 
 def get_cpt_candidate_sets(performed_procedures: Any, documentation: str = "", threshold: float = DEFAULT_THRESHOLD, top_n: int = DEFAULT_TOP_CANDIDATES) -> list[dict[str, Any]]:
-    items = normalize_detected_procedures(performed_procedures)
+    items = drop_superseded_procedures(normalize_detected_procedures(performed_procedures))
     dataframe = load_cpt_data()
     results = []
     for item in items:
-        matches = _dataset_matches(item, dataframe, float(threshold), top_n)
+        selected = _chargemaster_service(item)
+        matches = [selected] if selected else _dataset_matches(item, dataframe, float(threshold), top_n)
         selected = matches[0] if matches else None
         if selected is None:
             fallback = _fallback_for(item)

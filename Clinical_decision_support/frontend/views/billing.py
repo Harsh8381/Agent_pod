@@ -79,6 +79,11 @@ def billing_guardrail_rows(record):
             guardrail, tone, reason = "UNVERIFIED", "amber", "Performed status could not be verified"
         else:
             guardrail, tone, reason = "BLOCKED", "red", "Not documented as performed"
+        held = guardrail in {"BLOCKED", "UNVERIFIED"}
+        override = (record.get("billing_overrides") or {}).get(code) if held else None
+        if override:
+            guardrail, tone = "BILLABLE", "green"
+            reason = f"Confirmed performed by {override.get('by') or 'coder'}"
         rows.append(
             {
                 "candidate": candidate,
@@ -90,6 +95,9 @@ def billing_guardrail_rows(record):
                     "planned": "Planned",
                     "recommended": "Recommended",
                     "discussed": "Discussed",
+                    "historical": "Historical",
+                    "negated": "Not performed",
+                    "superbill": "Superbill",
                 }.get(procedure_status, "Unknown"),
                 "evidence": best_excerpt(term, documentation, max_chars=90) or "No performed evidence found",
                 "documentation": ("Signed note" if record.get("status") == "Approved" else "Draft note")
@@ -98,9 +106,27 @@ def billing_guardrail_rows(record):
                 "guardrail": guardrail,
                 "tone": tone,
                 "reason": reason,
+                # Held by the guardrail but released by a coder; shown as an override choice.
+                "overridden": bool(override),
+                "overridable": held,
             }
         )
     return rows
+
+
+def _set_billing_overrides(record, key):
+    """Persist the coder's 'confirmed performed' choices for held lines on the encounter."""
+    selected = set(st.session_state.get(key) or [])
+    previous = record.get("billing_overrides") or {}
+    stamp = {"by": current_user()["username"], "at": datetime.now().strftime("%d %b %Y %H:%M")}
+    record["billing_overrides"] = {code: previous.get(code) or stamp for code in selected}
+    added, removed = selected - set(previous), set(previous) - selected
+    save_record(record)
+    if added or removed:
+        log_action(
+            "billing.override",
+            f"{record.get('id')}: confirmed {', '.join(sorted(added)) or '—'}; withdrawn {', '.join(sorted(removed)) or '—'}",
+        )
 
 
 def _patient_key(record):
@@ -292,6 +318,17 @@ def show_billing():
     bill_rows, bill_total, unpriced = (
         build_estimated_hospital_bill([row["candidate"] for row in billable], encounter_type) if billable else ([], 0.0, [])
     )
+    # Chargemaster price for every coded line, billable or held, so held services still show what they cost.
+    coded = [row for row in guardrail if row["guardrail"] != "EXCLUDED"]
+    prices = {
+        line["CPT/HCPCS Code"]: line
+        for line in (build_estimated_hospital_bill([row["candidate"] for row in coded], encounter_type)[0] if coded else [])
+    }
+    held_value = sum(
+        float(str(prices.get(row["code"], {}).get("Gross Charge", "")).replace("$", "").replace(",", "") or 0)
+        for row in held
+        if prices.get(row["code"], {}).get("Pricing Status") == "Priced"
+    )
     code_rows = build_code_rows(record, encounter_code_results(record)) if guardrail else []
     post_summary = summarize_checks(coding_validation(record, code_rows)[1]) if code_rows else None
     coding_blocked = bool(post_summary and post_summary["status"] == "fail")
@@ -419,20 +456,43 @@ def show_billing():
                 trailing=badge(f"{len(billable)} billable · {len(held)} held", "amber" if held else "green"),
             )
             render_html_table(
-                ["CPT", "Service", "Order", "Performed evidence", "Documentation", "Guardrail"],
+                ["CPT", "Service", "Order", "Performed evidence", "Documentation", "Charge", "Guardrail"],
                 [
                     [
                         f"<code>{escape(row['code'])}</code>",
-                        escape(row["service"]),
+                        escape(prices.get(row["code"], {}).get("Service Description") or row["service"]),
                         escape(row["order"]),
                         escape(row["evidence"]),
                         escape(row["documentation"]),
+                        escape(str(prices.get(row["code"], {}).get("Gross Charge") or "—")),
                         badge(row["guardrail"], row["tone"]),
                     ]
                     for row in guardrail
                 ],
                 ["blocked" if row["guardrail"] == "BLOCKED" else "" for row in guardrail],
             )
+            overridable = [row for row in guardrail if row["overridable"]]
+            if overridable:
+                override_key = f"billing_override_{record.get('id')}"
+                if override_key not in st.session_state:
+                    st.session_state[override_key] = [row["code"] for row in overridable if row["overridden"]]
+                labels = {
+                    row["code"]: f"{row['code']} · {prices.get(row['code'], {}).get('Service Description') or row['service']}"
+                    f" · {prices.get(row['code'], {}).get('Gross Charge') or 'Unpriced'}"
+                    for row in overridable
+                }
+                st.multiselect(
+                    "Coder override: confirm held services that were actually performed",
+                    options=list(labels),
+                    format_func=labels.get,
+                    key=override_key,
+                    on_change=_set_billing_overrides,
+                    args=(record, override_key),
+                    disabled=not can("RCM Workspace", "Edit"),
+                    placeholder="Select services to release to the bill",
+                    help="Use only when the service was performed but the note does not say so. "
+                    "Your username and time are saved with the encounter and in the audit log.",
+                )
             st.checkbox(
                 "I reviewed these CPT/HCPCS codes and confirm the services were performed and documented for this encounter.",
                 key=attest_key,
@@ -468,12 +528,22 @@ def show_billing():
                     ("Gross", f"${bill_total:,.2f}"),
                     ("Billable lines", len(bill_rows)),
                     ("Held lines", len(held)),
+                    ("Held value", f"${held_value:,.2f}"),
                     ("Unpriced", len(unpriced)),
                     ("Diagnosis codes", ", ".join(dx_codes[:3]) or "—"),
                 ]
             )
             if bill_rows:
                 st.dataframe(pd.DataFrame(bill_rows), hide_index=True, width="stretch")
+            if held:
+                st.markdown('<div class="nc-label" style="margin-top:.6rem">Held — not in gross</div>', unsafe_allow_html=True)
+                st.dataframe(
+                    pd.DataFrame(
+                        [{**prices.get(row["code"], {"CPT/HCPCS Code": row["code"]}), "Held reason": row["reason"]} for row in held]
+                    ),
+                    hide_index=True,
+                    width="stretch",
+                )
             if unpriced:
                 render_banner(
                     "Unpriced codes: " + ", ".join(unpriced),

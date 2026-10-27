@@ -13,6 +13,7 @@ import requests
 import streamlit as st
 
 from frontend.api_client import HealthcareApiClient
+from frontend.chargemaster import _configured_path as configured_chargemaster_path
 from frontend.chargemaster import build_cpt_bill_rows
 from frontend.settings import PROJECT_ROOT
 
@@ -127,7 +128,7 @@ def is_documented_cpt_candidate(item, documentation):
         return False
     if not is_explicitly_performed:
         return False
-    status = classify_procedure_status(item, documentation) if classify_procedure_status else "unknown"
+    status = classify_procedure_status(*_procedure_status_inputs(item, documentation)) if classify_procedure_status else "unknown"
     return status in {"performed", "ordered_not_performed", "planned", "recommended", "discussed"}
 
 
@@ -423,8 +424,9 @@ def build_estimated_hospital_bill(cpt_results, encounter_type):
     encounter_key = "IPD" if str(encounter_type).upper() in {"IPD", "INPATIENT"} else "OPD"
     pricing_rows = build_cpt_bill_rows(candidates, encounter_type=encounter_key)
     sheet_name = "IPD Charges" if encounter_key == "IPD" else "OPD Charges"
+    chargemaster_path = configured_chargemaster_path()
     departments = load_chargemaster_department_map(
-        PROJECT_ROOT / "Original_Hospital_IPD_OPD_Charges_200_Demo.xlsx",
+        str(chargemaster_path or PROJECT_ROOT / "Original_Hospital_IPD_OPD_Charges_200_Demo.xlsx"),
         sheet_name,
     )
     table_rows = []

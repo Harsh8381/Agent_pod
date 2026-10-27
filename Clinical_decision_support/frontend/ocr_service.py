@@ -183,12 +183,12 @@ def cpt_reference() -> dict[str, str]:
     except Exception:
         pass
     try:
-        from cpt_coder import ADDITIONAL_CPT_FALLBACKS, COMMON_CPT_FALLBACKS, load_cpt_data
+        from cpt_coder import ADDITIONAL_CPT_FALLBACKS, CHARGEMASTER_CPT_SERVICES, COMMON_CPT_FALLBACKS, load_cpt_data
 
         data = load_cpt_data()
         for row in data.to_dict("records") if data is not None else []:
             reference[str(row["code"]).upper()] = str(row.get("description") or "")
-        for entry in (*COMMON_CPT_FALLBACKS.values(), *ADDITIONAL_CPT_FALLBACKS.values()):
+        for entry in (*COMMON_CPT_FALLBACKS.values(), *ADDITIONAL_CPT_FALLBACKS.values(), *CHARGEMASTER_CPT_SERVICES.values()):
             if entry.get("code"):
                 reference.setdefault(str(entry["code"]).upper(), str(entry.get("description") or ""))
     except Exception:
