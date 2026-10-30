@@ -1792,6 +1792,34 @@
           "Street_Address": null,
           "Mobile": null,
           "Email": null
+        },
+        {
+          "Patient_ID": "P100052",
+          "MRN": "MRN100052",
+          "First_Name": "Liron",
+          "Last_Name": "Sarangi",
+          "Legal_Name": null,
+          "DOB": "2004-08-09",
+          "Age": null,
+          "Sex_at_Birth": "Male",
+          "Pronouns": null,
+          "Marital_Status": null,
+          "Race": null,
+          "Ethnicity": null,
+          "Preferred_Language": null,
+          "Secondary_Language": null,
+          "PCP": null,
+          "Record_Status": "Active",
+          "Height_cm": null,
+          "Weight_kg": null,
+          "BMI": null,
+          "City": null,
+          "State": null,
+          "ZIP": null,
+          "Country": null,
+          "Street_Address": null,
+          "Mobile": null,
+          "Email": null
         }
       ]
     },
@@ -3932,6 +3960,20 @@
           "Status": "In Progress",
           "Primary_Diagnosis_Code": null,
           "Primary_Diagnosis": "Chief Complaint:\nFever, hypertension, asthma.\n\nHistory of Present Illness:\nPatient reports suffering from fever, hypertension, and asthma. History of smoking, quit 5 years ago. Current temperature recorded at 101°F and blood pressure recorded at 150/90 in the clinic; blood pressure at home was 154/92.\n\nPast Medical History:\nHypertension, asthma, history of smoking (quit 5 years ago).\n\nCurrent Medications:\n\n\nAssessment:\n\n\nPlan:\nRecommend HbA1c test, chest X-ray, and CT scan.",
+          "Priority": "Routine",
+          "Disposition_or_Follow_Up": null
+        },
+        {
+          "Encounter_ID": "ENC-041181EEBC",
+          "Patient_ID": "P100052",
+          "Date": "2026-10-17",
+          "Type": "Outpatient",
+          "Department": "Primary Care",
+          "Provider": "dr.noor",
+          "Facility": "NuuCare Demo",
+          "Status": "In Progress",
+          "Primary_Diagnosis_Code": null,
+          "Primary_Diagnosis": "Chief Complaint:\nFever, hypertension, asthma.\n\nHistory of Present Illness:\nPatient reports suffering from fever, hypertension, and asthma. Recorded temperature at home was 101°F. Recorded blood pressure at the hospital is 150/92, and recorded temperature is 100.4°F.\n\nPast Medical History:\nSmoking history.\n\nCurrent Medications:\n\n\nAssessment:\n\n\nPlan:\nRecommend undergoing HbA1c test, chest X-ray, and CT scan.",
           "Priority": "Routine",
           "Disposition_or_Follow_Up": null
         }
@@ -15685,6 +15727,17 @@
           "Service_Date": "2026-10-15",
           "Author": "dR.mOHAN",
           "Note_Summary": "Subjective:\nFever, hypertension, asthma.\n\nPatient reports suffering from fever, hypertension, and asthma. History of smoking, quit 5 years ago. Current temperature recorded at 101°F and blood pressure recorded at 150/90 in the clinic; blood pressure at home was 154/92.\n\nHypertension, asthma, history of smoking (quit 5 years ago).\n\nObjective:\nTemperature: 101°F, Blood Pressure: 150/90 in clinic, 154/92 at home.\n\nAssessment:\nNot documented.\n\nPlan:\nRecommend HbA1c test, chest X-ray, and CT scan.",
+          "Status": "Draft",
+          "Data_Tag": null
+        },
+        {
+          "Note_ID": "NOTE-0040E06AFE",
+          "Patient_ID": "P100052",
+          "Encounter_ID": "ENC-041181EEBC",
+          "Note_Type": "SOAP",
+          "Service_Date": "2026-10-17",
+          "Author": "dr.noor",
+          "Note_Summary": "Subjective:\nFever, hypertension, asthma.\n\nPatient reports suffering from fever, hypertension, and asthma. Recorded temperature at home was 101°F. Recorded blood pressure at the hospital is 150/92, and recorded temperature is 100.4°F.\n\nSmoking history.\n\nObjective:\nRecorded blood pressure at the hospital: 150/92. Recorded temperature at the hospital: 100.4°F.\n\nAssessment:\nNot documented.\n\nPlan:\nRecommend undergoing HbA1c test, chest X-ray, and CT scan.",
           "Status": "Draft",
           "Data_Tag": null
         }

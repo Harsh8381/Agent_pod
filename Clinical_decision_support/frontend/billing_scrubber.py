@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from frontend.chargemaster import price_cpt_bill_lines
-from cpt_coder import ADDITIONAL_CPT_FALLBACKS, COMMON_CPT_FALLBACKS, load_cpt_data
+from cpt_coder import ADDITIONAL_CPT_FALLBACKS, CHARGEMASTER_CPT_SERVICES, COMMON_CPT_FALLBACKS, load_cpt_data
 
 
 IMAGING_CODES = {"71045", "71046", "70450", "70460", "71250"}
@@ -76,7 +76,7 @@ def _imaging_family(code: str) -> str | None:
 def _valid_cpt_codes() -> set[str]:
     dataframe = load_cpt_data()
     codes = set(dataframe["code"].astype(str).map(_code)) if dataframe is not None and not dataframe.empty else set()
-    for entry in (*COMMON_CPT_FALLBACKS.values(), *ADDITIONAL_CPT_FALLBACKS.values()):
+    for entry in (*COMMON_CPT_FALLBACKS.values(), *ADDITIONAL_CPT_FALLBACKS.values(), *CHARGEMASTER_CPT_SERVICES.values()):
         if entry.get("code"):
             codes.add(_code(entry["code"]))
     return codes

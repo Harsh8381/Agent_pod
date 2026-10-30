@@ -115,7 +115,7 @@ def test_cds_endpoint_uses_existing_encounter_context(monkeypatch):
 
 
 def test_append_selected_insights_to_note_adds_values_under_heading():
-    from frontend.streamlit_app import append_selected_insights_to_note
+    from frontend.clinical_text import append_selected_insights_to_note
 
     summary = "Subjective: Cough.\n- **MAJOR DIAGNOSIS / ISSUES**\nAwaiting manual input."
 
@@ -127,7 +127,7 @@ def test_append_selected_insights_to_note_adds_values_under_heading():
 
 
 def test_code_suggestions_separate_diagnoses_and_procedures():
-    from frontend.streamlit_app import get_code_suggestions
+    from frontend.encounter_pipeline import get_code_suggestions
 
     result = get_code_suggestions(["Hypertension", "Complete blood count", "Color Blindness"])
 
@@ -150,7 +150,7 @@ def test_hypertension_uses_general_icd10_code():
 
 
 def test_procedure_insights_return_cpt_codes():
-    from frontend.streamlit_app import get_code_suggestions
+    from frontend.encounter_pipeline import get_code_suggestions
 
     result = get_code_suggestions(["Complete Blood Count"])
 
@@ -160,7 +160,7 @@ def test_procedure_insights_return_cpt_codes():
 
 
 def test_generic_encounter_returns_office_visit_cpt_code():
-    from frontend.streamlit_app import get_code_suggestions
+    from frontend.encounter_pipeline import get_code_suggestions
 
     result = get_code_suggestions(["Established Patient Office Visit"], "Patient evaluated.")
 
@@ -169,7 +169,7 @@ def test_generic_encounter_returns_office_visit_cpt_code():
 
 
 def test_code_suggestions_route_office_visit_to_cpt():
-    from frontend.streamlit_app import get_code_suggestions
+    from frontend.encounter_pipeline import get_code_suggestions
 
     result = get_code_suggestions(["Established Patient Office Visit"], "Patient evaluated.")
 
@@ -190,7 +190,7 @@ def test_codes_endpoint_returns_office_visit_cpt_code():
 
 
 def test_physical_therapy_is_detected_as_a_cpt_insight():
-    from frontend.streamlit_app import get_detected_insights
+    from frontend.encounter_pipeline import get_detected_insights
 
     assert "Physical Therapy" in get_detected_insights("Begin physical therapy twice weekly.")
 

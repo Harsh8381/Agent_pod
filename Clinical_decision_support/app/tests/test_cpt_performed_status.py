@@ -44,6 +44,32 @@ def test_procedure_status_classification(documentation, expected_status):
 
 
 @pytest.mark.parametrize(
+    ("documentation", "expected_status"),
+    [
+        ("HbA1c was 8.2% today.", "performed"),
+        ("HbA1c 7.4 percent.", "performed"),
+        ("Hemoglobin A1c came back at 9.1.", "performed"),
+        ("A1C test result 7.9.", "performed"),
+        ("I recommend HbA1c test.", "recommended"),
+        ("Repeat HbA1c in 3 months.", "unknown"),
+        ("Check HbA1c 3 months from now.", "unknown"),
+        ("HbA1c was 8.2% last year.", "historical"),
+    ],
+)
+def test_lab_result_value_counts_as_performed(documentation, expected_status):
+    assert classify_procedure_status("A1C Test", documentation) == expected_status
+
+
+def test_distant_cue_in_unpunctuated_transcript_does_not_set_status():
+    transcript = (
+        "I have been suffering from fever hypertension asthma I have a smoking history today at home my "
+        "recorded temperature was 101 Fahrenheit I recommend you undergo hba1c test chest X-ray CT scan"
+    )
+    assert classify_procedure_status("A1C Test", transcript) == "recommended"
+    assert classify_procedure_status("Chest X-ray", transcript) == "recommended"
+
+
+@pytest.mark.parametrize(
     ("term", "documentation"),
     [
         ("Chest X-ray", "CHEST X-RAY WAS PERFORMED TODAY!"),
@@ -103,7 +129,7 @@ def test_inferred_procedures_are_candidates_not_performance_validation():
 
 def test_local_coding_fallback_requires_performed_status(monkeypatch):
     from frontend.api_client import HealthcareApiClient
-    from frontend.streamlit_app import get_backend_code_suggestions
+    from frontend.encounter_pipeline import get_backend_code_suggestions
 
     def unavailable_backend(self, conditions, procedures, documentation):
         raise RuntimeError("backend unavailable")
