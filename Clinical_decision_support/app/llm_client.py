@@ -1,3 +1,5 @@
+import time
+
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -10,6 +12,17 @@ from app.core.config import (
     COFORGE_CPT_MODEL,
     COFORGE_MODEL,
 )
+
+
+# The Coforge LLM Router intermittently answers valid requests with HTTP 400
+# "An unexpected error occurred while generating the response." (~40-50% of
+# calls in testing). Only that specific error is retried; real 400s fail fast.
+TRANSIENT_ROUTER_ATTEMPTS = 5
+TRANSIENT_ROUTER_MESSAGE = "unexpected error occurred while generating the response"
+
+
+def _is_transient_router_error(response):
+    return response.status_code == 400 and TRANSIENT_ROUTER_MESSAGE in response.text.lower()
 
 
 def _call_llm_with_config(prompt, system_prompt=None, temperature=0.3, api_key=None, api_url=None, model=None, key_name="COFORGE_API_KEY"):
@@ -62,17 +75,21 @@ def _call_llm_with_config(prompt, system_prompt=None, temperature=0.3, api_key=N
     session.mount("https://", HTTPAdapter(max_retries=retry_policy))
     session.mount("http://", HTTPAdapter(max_retries=retry_policy))
 
-    try:
-        response = session.post(
-            clean_api_url,
-            headers=headers,
-            json=body,
-            timeout=(15, 120),
-        )
-    except requests.exceptions.RequestException as error:
-        raise ConnectionError(
-            "Unable to connect to the configured Coforge LLM service after retries."
-        ) from error
+    for attempt in range(TRANSIENT_ROUTER_ATTEMPTS):
+        try:
+            response = session.post(
+                clean_api_url,
+                headers=headers,
+                json=body,
+                timeout=(15, 120),
+            )
+        except requests.exceptions.RequestException as error:
+            raise ConnectionError(
+                "Unable to connect to the configured Coforge LLM service after retries."
+            ) from error
+        if not _is_transient_router_error(response) or attempt == TRANSIENT_ROUTER_ATTEMPTS - 1:
+            break
+        time.sleep(1.5 * (attempt + 1))
 
     if response.status_code != 200:
         raise RuntimeError(
