@@ -17,6 +17,7 @@ It combines an **AI ambient scribe**, **retrieval-augmented clinical decision su
 5. [Technology stack](#5-technology-stack)
 6. [How the billing pipeline works](#6-how-the-billing-pipeline-works)
 7. [Value-based care engine](#7-value-based-care-engine)
+   - [7a. HEDIS engine](#7a-hedis-engine)
 8. [Security and access control](#8-security-and-access-control)
 9. [Data](#9-data)
 10. [Project structure](#10-project-structure)
@@ -100,6 +101,7 @@ The web app has two workspaces, switched from the top bar.
 | **Care transitions** | Transitions of care, plan all-cause readmission risk, follow-up after ED visit. |
 | **Value & trust** | Survey insights, utilization and value, governance with a hash-chained audit log. |
 | **Quality loop** | A longitudinal proof of concept: population dashboard, Patient 360, care-gap worklist from detection to closure, governance, and golden tests. |
+| **HEDIS engine** | HEDIS registry, supplemental submission, payer reconciliation, AI agent console (L1/L2/L3) and NCQA certification readiness. See section 7a. |
 
 HEDIS measures covered: **GSD** (glycemic status), **CBP** (blood pressure control), **KED** (kidney evaluation), **EED** (eye exam), **BCS-E** (breast cancer screening), **COL-E** (colorectal screening), **SPD** (statin therapy), **COA-FSA**, **AIS-E** (immunizations), **TRC** (transitions of care), **FMC** (follow-up after ED visit), **PCR** (readmissions).
 
@@ -192,12 +194,55 @@ All 45 coded services in the chargemaster are covered by an automated test that 
 - **Datasets.** A 20-patient, 12-month longitudinal dataset with deliberate edge cases and golden expected results, plus a configurable 300-patient HEDIS-aligned dataset (patients, encounters, conditions, observations, procedures, claims, documents, eligibility, results, gaps, risk scores, care plans, outreach, audit trail).
 - **Audit.** An append-only, hash-chained audit log: each event stores the hash of the previous one, so tampering is detectable.
 
+## 7a. HEDIS engine
+
+The production layer on top of the measure engine (`app/hedis/`, API under `/hedis`, pages under **Value-based care → HEDIS engine**). It keeps its own state file with the same file locking and hash-chained audit as the measure engine.
+
+**HEDIS registry.** One authoritative row per (period, member, measure), rebuilt from the latest versioned measure result and never edited by hand.
+- Each row records denominator, exclusion and compliance status, the accepted records behind the numerator, and their NCQA source class: *administrative* (claims), *standard supplemental* (lab, EHR and device feeds) or *non-standard supplemental* (documents, which need primary-source verification).
+- Snapshots freeze the registry with a SHA-256 content hash and a diff against the previous snapshot.
+- Locking the period needs a second person: whoever published the snapshot can't lock. The registry must also still match its snapshot, with no blocking integrity issues.
+
+**Supplemental submission engine** (NCQA IS 5.0). Numerators the payer can't see in claims become supplemental records.
+- **Validation:** each record is checked against the payer's file spec: member ID format, service date inside the measure window, allowed code systems, result values for outcome measures, NPI check digit, primary-source verification for non-standard data, and a payer-roster warning.
+- **Idempotency:** a key built from the record's content means the same evidence is never in flight twice.
+- **Batch lifecycle:** draft → signed → transmitted → acknowledged, partial or rejected. The signer can't be the builder, and agents never sign or transmit.
+- **Payer files:** pipe-delimited with header and trailer, or CSV, with control totals (record count and SHA-256).
+- **Rejections:** the payer's acknowledgement is ingested record by record. Rejected records are corrected and resubmitted with a link back to the rejection.
+
+**Payer reconciliation.** The payer's member-level measure file (CSV) is compared with the registry.
+- Every difference is classified: compliant only internally, compliant only at the payer, exclusion mismatch, denominator mismatch, not attributed by the payer, or member unknown.
+- Each one gets a root cause traced through the supplemental ledger (never submitted, in draft, awaiting acknowledgement, rejected, or accepted but not applied), plus an owner role, an action and its effect on the payer-reported rate.
+- Disputes are opened only for root causes the payer must fix.
+
+**AI agent layer.** Seven agents in three tiers, run by one orchestrator that enforces the tier policy.
+
+| Tier | Behaviour | Agents |
+|---|---|---|
+| **L1 · Autonomous** | Executes on its own, but only reversible, low-risk catalogue actions; every action is logged and can be reverted | Registry quality sentinel, Gap prioritizer, Supplemental preparer (unsigned drafts only) |
+| **L2 · Assisted** | Proposes; a person holding the action's permission approves, and the action runs under that person's name | Rejection resolver (record corrections), Reconciliation analyst (routed tasks, drafted disputes) |
+| **L3 · Escalation** | Never acts; packages the case and routes it to an expert role, who records the decision | Clinical escalation (to Physician/APP), Audit-risk sentinel (to HEDIS Lead / Auditor) |
+
+Each tier has a kill switch, repeated runs don't create duplicate work, and agents can't approve, sign or transmit anything. Determinations are rule-based. A language model (optional, `HEDIS_AGENT_LLM=1`) only rewrites the explanation a person reads.
+
+**NCQA certification readiness.**
+- **Controls:** 27 controls mapped to the HEDIS Compliance Audit standards (HD, IS 1.0–7.0) plus security. Each one checks live evidence: code systems, enrollment rule, NPIs, primary-source verification, file controls, acknowledgements, duplicates, audit chains, reproducibility, totals tie-out, reconciliation agreement, period lock, API authentication, segregation of duties and agent governance.
+- **Attestations:** controls only a person can evidence (Roadmap, over-read sample, source documentation) need a signed attestation by the named role, and it expires.
+- **Output:** a readiness score, a history of dated assessments, and a Markdown/JSON evidence pack for the auditor.
+- **Honesty:** the readiness check says plainly that certification also needs licensed NCQA specifications, NCQA's test deck and an NCQA-licensed auditor. Control HD-1 fails until those exist.
+
 ## 8. Security and access control
 
 - **Accounts:** first-run bootstrap of a Super Admin, PBKDF2-SHA256 password hashes (never plain text), forced change of temporary passwords, lockout for 15 minutes after 5 failed sign-ins, and a session timeout.
 - **Roles:** 14 roles. There are 5 clinical roles (Coding Specialist, RCM Analyst, Clinical Reviewer, Operations Admin, Super Admin) and 9 VBC roles (Physician/APP, Care Manager, HEDIS Analyst, HEDIS Lead, Abstractor, Pharmacist, Stars/Contract, Executive, Auditor).
 - **Permissions:** a role × module matrix with *View / Edit / Approve / Admin* actions, enforced on every page and on sensitive buttons. For example, only roles with RCM *Approve* can release a claim.
-- **Audit log:** sign-ins, password changes, permission edits, code decisions, billing overrides and claim releases.
+- **API security (HEDIS engine):**
+  - **Tokens:** signed HS256 bearer tokens with a 30-minute lifetime. The secret comes from `HEDIS_API_SECRET`.
+  - **Permissions:** every route declares one named permission (for example `supplemental:sign` or `registry:lock`). Permissions resolve through the same role matrix the User Access page edits.
+  - **Account changes:** deactivated, locked or re-roled accounts lose access immediately.
+- **Segregation of duties:** builder ≠ signer, snapshot publisher ≠ period locker, agent ≠ approver. Approving an agent proposal also needs the permission of the action it would run.
+- **Minimum necessary:** names and dates of birth are masked for roles that don't work with identified members (Executive, Stars/Contract). PHI-bearing reads go to an access log.
+- **Audit log:** sign-ins, password changes, permission edits, code decisions, billing overrides and claim releases. On the HEDIS side, every write and permission denial goes on the hash-chained audit trail.
 - **Privacy:** OCR runs locally. Only transcript-derived text is sent to the LLM. All data in the repository is synthetic.
 
 ## 9. Data
@@ -227,11 +272,14 @@ Clinical_decision_support/
 │   ├── services/                EHR JSON store, transcription, SOAP helpers
 │   ├── vbc/                     300-patient HEDIS dataset loader and population dashboard
 │   ├── vbc_poc/                 quality-loop engine: catalog, engine, evidence, metrics, risk, service
+│   ├── hedis/                   registry, supplemental, reconciliation, ncqa, store, config
+│   │   └── agents/              tier policy, action catalogue, L1/L2/L3 agents, orchestrator
+│   ├── security/                HS256 tokens, role-based permissions, FastAPI require() dependency
 │   ├── scripts/build_kb.py      builds the RAG index
 │   └── tests/                   504 pytest tests
 ├── frontend/                    Streamlit app
 │   ├── streamlit_app.py         entry point
-│   ├── views/                   one module per page (+ views/vbc, views/vbc_poc)
+│   ├── views/                   one module per page (+ views/vbc, views/vbc_poc, views/hedis)
 │   ├── ui/                      theme, shell (navigation), components, session state
 │   ├── encounter_pipeline.py    coding → guardrail → bill (no UI)
 │   ├── chargemaster.py          pricing, CDM validation, revenue codes
@@ -290,7 +338,12 @@ Create `Clinical_decision_support/.env` and never commit it.
 | `CHARGEMASTER_PATH` | Chargemaster file (CSV, XLSX or JSON) | the Athena / Care Gap workbook |
 | `NUUCARE_ENCOUNTER_TYPE` | Default chargemaster sheet (`OPD`/`IPD`) | `OPD` |
 | `VBC_DATASET_PATH` | VBC dataset zip | bundled synthetic dataset |
-| `VBC_POC_ENABLED`, `VBC_POC_TARGET_RATE` | Quality-loop feature flag and target compliance rate | see `app/vbc_poc` |
+| `VBC_POC_ENABLED`, `VBC_POC_TARGET_RATE` | Quality-loop feature flag (also gates the HEDIS engine) and target compliance rate | see `app/vbc_poc` |
+| `HEDIS_API_SECRET` | HS256 token-signing secret (≥ 32 characters), from your secret store | generated into `data/.hedis_api_secret` for local use |
+| `HEDIS_TOKEN_TTL_SECONDS` | Bearer-token lifetime | `1800` |
+| `HEDIS_STATE`, `HEDIS_OUTBOX` | HEDIS engine state file and payer-file outbox | `data/hedis_state.json`, `data/hedis_outbox/` |
+| `NUUCARE_ACCESS_STORE` | User and role store shared by the UI and the API | `data/access_control.json` |
+| `HEDIS_AGENT_LLM` | `1` lets the configured LLM rephrase agent explanations (never decisions) | `0` |
 
 ## 13. Testing
 
@@ -322,6 +375,7 @@ Interactive docs: `http://localhost:8000/docs`.
 | EHR | `GET/POST /ehr/patients`, `GET/PUT/DELETE /ehr/patients/{id}`, `GET /ehr/patients/{id}/chart`, records CRUD, `GET /ehr/export` |
 | Bills | `GET /ehr/bills`, `POST /patients/{id}/bills/opd`, `POST /patients/{id}/bills/ipd` |
 | VBC quality loop (`/vbc`) | `GET /meta`, `POST /evaluate/{patient_id}`, `POST /evaluate-population`, `GET /patients`, `GET /patients/{id}/360`, gaps, evidence verification, outreach (create / approve / send / outcome), care plans, `GET /dashboard`, `GET /audit`, `POST /reset` |
+| HEDIS engine (`/hedis`, bearer token) | `POST /auth/token`, `GET /me`; registry: `GET /registry`, `POST /registry/snapshots`, `POST /registry/lock`, `POST /registry/reopen`; supplemental: `GET /supplemental`, `POST /supplemental/batches`, `.../{id}/sign`, `.../submit`, `.../ack`, `.../file`, `POST /supplemental/records/{key}/correction`; reconciliation: `POST /reconciliation/runs`, `GET /reconciliation/runs/{id}`, disputes, tasks; agents: `GET /agents`, `POST /agents/{key}/run`, `POST /agents/tiers/{tier}/run`, `POST /agents/proposals/{id}/decision`, `POST /agents/escalations/{id}/resolve`, `PUT /agents/tiers/{tier}`; NCQA: `GET /ncqa`, `POST /ncqa/assessments`, `POST /ncqa/attestations/{control}`, `GET /ncqa/evidence-pack`; `GET /audit` |
 
 ## 15. Limitations
 
@@ -334,6 +388,9 @@ Interactive docs: `http://localhost:8000/docs`.
 - Speech recognition and the LLM need network access.
 - `app/rules/rule_engine.py` exists but is not wired into CDS.
 - No Docker or CI/CD configuration yet.
+- HEDIS engine: payer member files and acknowledgements are simulated from the registry; real payer file layouts come from each payer's companion guide and plug into the per-payer spec.
+- HEDIS engine state is a locked JSON file, sized for a pilot population; a multi-site rollout needs a database behind the same store interface.
+- NCQA readiness is a self-assessment. Certification still needs licensed specifications, NCQA's test deck and an NCQA-licensed auditor.
 
 ## 16. Project highlights for a CV
 
@@ -345,6 +402,8 @@ Interactive docs: `http://localhost:8000/docs`.
 > - Mapped all 45 coded services in a hospital chargemaster (labs, imaging, cardiology, endoscopy, therapy, drugs, implants, E/M levels) to CPT/HCPCS codes from natural clinical phrasing, validated against the live workbook in tests.
 > - Implemented claim drafting with professional/facility split, supporting-document validation and claim scrubbing with a 0–100 quality score.
 > - Designed a deterministic HEDIS measure engine (GSD, CBP, BCS-E, COL-E, KED, EED, TRC, FMC, PCR and more) with a care-gap lifecycle, explainable prioritization, human-approved outreach and a hash-chained, tamper-evident audit log.
-> - Secured the app with role-based access control (14 roles, View/Edit/Approve/Admin), PBKDF2 password hashing, account lockout and full audit logging. Added local, privacy-preserving OCR for scanned documents and superbills.
+> - Built a production-grade HEDIS engine: a hash-versioned member×measure registry with four-eyes period lock, a supplemental-data submission engine (payer file specs, NPI/PSV validation, idempotent batches, signed files with control totals, acknowledgement ingestion, corrected resubmission) and payer reconciliation that traces every disagreement to a root cause, owner and rate impact.
+> - Designed a three-tier AI agent layer (L1 autonomous reversible actions, L2 human-approved proposals, L3 expert escalation) with kill switches, idempotent runs and full audit, plus NCQA certification-readiness controls mapped to the HEDIS Compliance Audit IS standards with attestations and an auditor evidence pack.
+> - Secured the app with role-based access control (14 roles, View/Edit/Approve/Admin) enforced in the UI and a token-authenticated API, segregation of duties, PHI masking, PBKDF2 password hashing, account lockout and full audit logging. Added local, privacy-preserving OCR for scanned documents and superbills.
 
 **Skills demonstrated:** LLM application design, RAG, NLP and rule-based clinical text classification, healthcare revenue-cycle domain knowledge (ICD-10, CPT/HCPCS, CDM, 837P/837I, NCCI), HEDIS / value-based care, REST API design, RBAC and security, data engineering with pandas and Excel, automated testing.

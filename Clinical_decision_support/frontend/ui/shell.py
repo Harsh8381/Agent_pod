@@ -92,6 +92,16 @@ VBC_NAV = (
         ),
     ),
     (
+        "HEDIS engine",
+        (
+            ("hedis_registry", "HEDIS registry", ":material/table_view:"),
+            ("hedis_supplemental", "Supplemental submission", ":material/outbox:"),
+            ("hedis_reconciliation", "Payer reconciliation", ":material/sync_alt:"),
+            ("hedis_agents", "AI agent console", ":material/smart_toy:"),
+            ("hedis_ncqa", "NCQA readiness", ":material/workspace_premium:"),
+        ),
+    ),
+    (
         "Value and trust",
         (
             ("vbc_surveys", "Survey insights", ":material/forum:"),
@@ -123,6 +133,7 @@ TOP_NAV = {
         ("vbc_transitions", "Care transitions"),
         ("vbc_value", "Value & trust"),
         ("vbcpoc_dashboard", "Quality loop"),
+        ("hedis_registry", "HEDIS engine"),
     ),
 }
 # Which top-bar tab is highlighted for each page.
@@ -148,6 +159,8 @@ TOP_NAV_GROUP = {
     "vbc_surveys": "vbc_value", "vbc_value": "vbc_value", "vbc_governance": "vbc_value",
     "vbcpoc_dashboard": "vbcpoc_dashboard", "vbcpoc_patient": "vbcpoc_dashboard", "vbcpoc_gaps": "vbcpoc_dashboard",
     "vbcpoc_governance": "vbcpoc_dashboard",
+    "hedis_registry": "hedis_registry", "hedis_supplemental": "hedis_registry", "hedis_reconciliation": "hedis_registry",
+    "hedis_agents": "hedis_registry", "hedis_ncqa": "hedis_registry",
 }
 WORKFLOW_HELP = {
     "clinical": (

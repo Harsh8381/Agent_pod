@@ -75,6 +75,12 @@ PAGE_MODULES = {
     "vbcpoc_patient": POC_MODULE,
     "vbcpoc_gaps": POC_MODULE,
     "vbcpoc_governance": POC_MODULE,
+    # HEDIS engine (runs on the quality-loop measure engine, so it shares its feature flag)
+    "hedis_registry": "HEDIS Registry",
+    "hedis_supplemental": "Supplemental Submission",
+    "hedis_reconciliation": "Payer Reconciliation",
+    "hedis_agents": "AI Agent Console",
+    "hedis_ncqa": "NCQA Readiness",
 }
 
 
@@ -325,7 +331,7 @@ def can(store: dict[str, Any], user: dict[str, Any] | None, module: str, action:
 def can_view_page(store: dict[str, Any], user: dict[str, Any] | None, page: str) -> bool:
     if page == "vbc_playbook":  # reference material for anyone working in the value-based care workspace
         return any(can(store, user, module, "View") for module in VBC_SCREENS.values())
-    if page.startswith("vbcpoc_") and not poc_enabled():
+    if page.startswith(("vbcpoc_", "hedis_")) and not poc_enabled():
         return False
     module = PAGE_MODULES.get(page)
     return module is None or can(store, user, module, "View")

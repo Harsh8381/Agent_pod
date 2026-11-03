@@ -61,7 +61,39 @@ VBC_SCREENS = {
 VBC_MODULES = tuple(VBC_SCREENS.values())
 # Value-Based Care POC (longitudinal quality loop): one module, actions mapped to the POC role matrix.
 POC_MODULE = "VBC Quality Loop (POC)"
-MODULES = CLINICAL_MODULES + VBC_MODULES + (POC_MODULE,)
+# HEDIS engine: registry, supplemental submission, payer reconciliation, tiered agents, NCQA readiness.
+# Edit = day-to-day work; Approve = sign-off that needs a second person (sign a payer file, lock the
+# period, open a dispute, approve an agent proposal, attest a control); Admin = agent kill switches.
+HEDIS_GRANTS = {
+    "HEDIS Registry": {
+        "View": ("HEDIS Analyst", "HEDIS Lead", "Stars / Contract", "Executive", "Auditor", "Care Manager", "Abstractor", "Operations Admin"),
+        "Edit": ("HEDIS Analyst", "HEDIS Lead"),
+        "Approve": ("HEDIS Lead",),
+    },
+    "Supplemental Submission": {
+        "View": ("HEDIS Analyst", "HEDIS Lead", "Stars / Contract", "Auditor", "RCM Analyst", "Operations Admin"),
+        "Edit": ("HEDIS Analyst", "HEDIS Lead"),
+        "Approve": ("HEDIS Lead",),
+    },
+    "Payer Reconciliation": {
+        "View": ("HEDIS Analyst", "HEDIS Lead", "Stars / Contract", "Executive", "Auditor", "Operations Admin"),
+        "Edit": ("HEDIS Analyst", "HEDIS Lead", "Stars / Contract"),
+        "Approve": ("Stars / Contract", "HEDIS Lead"),
+    },
+    "AI Agent Console": {
+        "View": ("HEDIS Analyst", "HEDIS Lead", "Stars / Contract", "Auditor", "Care Manager", "Physician / APP", "Operations Admin"),
+        "Edit": ("HEDIS Analyst", "HEDIS Lead", "Operations Admin"),
+        "Approve": ("HEDIS Analyst", "HEDIS Lead", "Stars / Contract", "Physician / APP"),
+        "Admin": ("Operations Admin",),
+    },
+    "NCQA Readiness": {
+        "View": ("HEDIS Analyst", "HEDIS Lead", "Auditor", "Executive", "Operations Admin"),
+        "Edit": ("HEDIS Analyst", "HEDIS Lead"),
+        "Approve": ("HEDIS Lead",),
+    },
+}
+HEDIS_MODULES = tuple(HEDIS_GRANTS)
+MODULES = CLINICAL_MODULES + VBC_MODULES + (POC_MODULE,) + HEDIS_MODULES
 POC_EDITORS = ("Care Manager", "HEDIS Analyst", "HEDIS Lead", "Physician / APP", "Pharmacist", "Operations Admin")
 POC_APPROVERS = ("Care Manager", "HEDIS Analyst", "HEDIS Lead", "Physician / APP")
 
@@ -157,6 +189,14 @@ def _grant_poc(role, permissions):
     grant["Admin"] = role == "Operations Admin"
 
 
+def _grant_hedis(role, permissions):
+    spec_role = ROLE_ALIASES.get(role, role)
+    for module, grants in HEDIS_GRANTS.items():
+        for action, roles in grants.items():
+            if spec_role in roles or role in roles:
+                permissions[module][action] = True
+
+
 def _role_permissions():
     defaults = {}
     for role in ROLES:
@@ -168,6 +208,7 @@ def _role_permissions():
             _grant_clinical(role, permissions)
             _grant_vbc(role, permissions)
             _grant_poc(role, permissions)
+            _grant_hedis(role, permissions)
         defaults[role] = permissions
     return defaults
 

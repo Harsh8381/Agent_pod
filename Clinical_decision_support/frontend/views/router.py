@@ -25,6 +25,11 @@ from frontend.views.coding import show_codes
 from frontend.views.consultation import show_new_consultation
 from frontend.views.dashboard import show_dashboard
 from frontend.views.ehr_records import show_ehr_demo_data
+from frontend.views.hedis.agents import show_hedis_agents
+from frontend.views.hedis.ncqa import show_hedis_ncqa
+from frontend.views.hedis.reconciliation import show_hedis_reconciliation
+from frontend.views.hedis.registry import show_hedis_registry
+from frontend.views.hedis.supplemental import show_hedis_supplemental
 from frontend.views.review import show_review_note
 from frontend.views.user_access import show_user_access
 from frontend.views.vbc.command import show_measures, show_stars, show_versions
@@ -86,6 +91,12 @@ PAGES = {
     "vbcpoc_patient": show_poc_patient,
     "vbcpoc_gaps": show_poc_worklist,
     "vbcpoc_governance": show_poc_governance,
+    # HEDIS engine: registry, supplemental submission, payer reconciliation, tiered agents, NCQA readiness
+    "hedis_registry": show_hedis_registry,
+    "hedis_supplemental": show_hedis_supplemental,
+    "hedis_reconciliation": show_hedis_reconciliation,
+    "hedis_agents": show_hedis_agents,
+    "hedis_ncqa": show_hedis_ncqa,
 }
 
 
