@@ -307,6 +307,58 @@ def _agent_governance(ctx):
                     + ", ".join(f"{tier} {'on' if on else 'off'}" for tier, on in switches.items()) + ".")
 
 
+def _normalization(ctx):
+    from app.hedis import normalizer
+
+    result = normalizer.normalize()
+    unmapped = result["unmapped"]
+    rate = result["summary"]["mapping_rate"]
+    if rate < 95:
+        return "FAIL", f"Only {rate}% of source records map to a canonical concept; unmapped: {', '.join(list(unmapped)[:5])}."
+    flags = result["flags"]
+    return ("WARN" if unmapped else "PASS"), (f"{result['summary']['raw_records']} records from {len(result['sources'])} sources map at {rate}% into "
+                                             f"{result['summary']['golden_records']} golden records ({result['summary']['merged']} cross-source merges); "
+                                             f"flags: {', '.join(f'{k} {v}' for k, v in flags.items()) or 'none'}.")
+
+
+def _qa_signoff(ctx):
+    runs = ctx.state["quality"]["runs"]
+    if not runs:
+        return "FAIL", "Supplied results have never been compared with results calculated from source evidence."
+    latest = runs[-1]
+    if not latest["signoff"]:
+        return "WARN", f"{latest['run_id']} ({latest['summary']['agreement']}% agreement) awaits a second-person sign-off."
+    failing = [m for m, e in latest["measures"].items() if not e["pass"]]
+    return "PASS", (f"{latest['run_id']} signed off {latest['signoff']['decision']} by {latest['signoff']['by']}; "
+                    + (f"{', '.join(failing)} returned to the supplier as outside tolerance." if failing else "every measure within tolerance."))
+
+
+def _version_governance(ctx):
+    specs = ctx.state["versions"]["specs"]
+    active = ctx.state["versions"]["active"]
+    if not specs or not active:
+        return "PASS", "Baseline specification 2026.1 active; no change has been proposed yet."
+    version = specs[active]
+    if version["author"] != "system (baseline)":
+        if version["approved_by"] in (None, version["author"]):
+            return "FAIL", f"Active version {active} was not approved by someone other than its author."
+        if not version["impact"]:
+            return "FAIL", f"Active version {active} went live without an impact analysis."
+    drafts = [v for v in specs.values() if v["status"] in ("DRAFT", "IN_REVIEW")]
+    return "PASS", (f"Active {active} ({version['spec_sha256'][:12]}), approved by {version['approved_by']}"
+                    + (f"; {len(drafts)} change(s) in review" if drafts else "") + ".")
+
+
+def _workflow_evidence(ctx):
+    evidence = ctx.state["workflow"]["evidence"].values()
+    self_verified = [e["capture_id"] for e in evidence if e["verified_by"] and e["verified_by"] == e["captured_by"]]
+    if self_verified:
+        return "FAIL", f"Workflow evidence verified by its own author: {', '.join(self_verified)}."
+    unverified = sum(not e["verified_by"] for e in evidence)
+    return "PASS", (f"{sum(bool(e['verified_by']) for e in evidence)} workflow capture(s) verified by a second person; {unverified} pending and "
+                    "not counted. Gaps close only on a compliant recalculation or an approved disposition.")
+
+
 CONTROLS = (
     Control("HD-1", "HD", "Licensed measure specifications", "Measures are calculated from current licensed NCQA specifications and value sets.",
             "License the NCQA HEDIS specifications and value-set directory; map each prototype rule to its licensed measure.", _licensed_specs),
@@ -314,7 +366,13 @@ CONTROLS = (
             "Re-evaluate the population after each rule release.", _rule_versioning),
     Control("HD-3", "HD", "Measure test deck", "Measure logic passes a patient-level test deck before release.",
             "Obtain NCQA's test deck through Measure Certification and run it on every release.", _test_deck),
+    Control("HD-4", "HD", "Measure version governance", "Measure changes are drafted, impact-analysed and approved by a second person before activation.",
+            "Run the impact analysis and have a second person approve before activating.", _version_governance),
     Control("IS1-1", "IS 1.0", "Standard coding", "Numerator evidence uses standard code systems.", "Map local codes to standard systems at ingestion.", _code_systems),
+    Control("IS1-3", "IS 1.0", "Cross-source normalization", "Every source maps to canonical concepts; duplicates across sources are merged with lineage.",
+            "Add the unmapped codes to the normalizer's mapping tables.", _normalization),
+    Control("IS4-3", "IS 4.0", "Workflow evidence verification", "Evidence captured in the care-gap workflow counts only after a second person verifies it.",
+            "Re-verify the listed captures with a different person.", _workflow_evidence),
     Control("IS1-2", "IS 1.0", "Service dates", "Every counted record has a valid service date.", "Reject undated records at ingestion.", _service_dates),
     Control("IS2-1", "IS 2.0", "Continuous enrollment", "Enrollment gaps are applied per measure before the denominator.",
             "Load the payer eligibility feed and re-evaluate.", _enrollment),
@@ -343,6 +401,8 @@ CONTROLS = (
     Control("IS7-1", "IS 7.0", "Totals tie-out", "Registry totals equal the measure engine's totals.", "Rebuild the registry from the latest run.", _totals_tie_out),
     Control("IS7-2", "IS 7.0", "Payer reconciliation", "Each payer's member-level file is reconciled at or above target agreement.",
             "Work the reconciliation tasks and disputes.", _payer_reconciliation),
+    Control("IS7-5", "IS 7.0", "Supplied vs calculated QA", "Supplied results are recalculated from source evidence and the comparison is signed off.",
+            "Run the QA comparison and have a second person sign it off.", _qa_signoff),
     Control("IS7-3", "IS 7.0", "Period lock", "The period is locked before final reporting.", "Lock the period (four eyes).", _period_lock),
     Control("IS7-4", "IS 7.0", "Roadmap (Record of Administration)", "The HEDIS Roadmap describing systems and processes is complete and current.",
             "Complete the Roadmap and attest.", None, "HEDIS Lead"),

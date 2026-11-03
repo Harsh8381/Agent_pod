@@ -101,7 +101,9 @@ The web app has two workspaces, switched from the top bar.
 | **Care transitions** | Transitions of care, plan all-cause readmission risk, follow-up after ED visit. |
 | **Value & trust** | Survey insights, utilization and value, governance with a hash-chained audit log. |
 | **Quality loop** | A longitudinal proof of concept: population dashboard, Patient 360, care-gap worklist from detection to closure, governance, and golden tests. |
-| **HEDIS engine** | HEDIS registry, supplemental submission, payer reconciliation, AI agent console (L1/L2/L3) and NCQA certification readiness. See section 7a. |
+| **Evidence & quality** | Cross-source evidence normalizer and supplied-vs-calculated QA comparison on the 300-member extract. |
+| **Care gap management** | Writable review-to-closure workflow, specialized by gap type (clinical, outcome, documentation). |
+| **Governance** | HEDIS registry, measure version control center, payer reconciliation, supplemental submission, NCQA readiness, AI agent console. See section 7a. |
 
 HEDIS measures covered: **GSD** (glycemic status), **CBP** (blood pressure control), **KED** (kidney evaluation), **EED** (eye exam), **BCS-E** (breast cancer screening), **COL-E** (colorectal screening), **SPD** (statin therapy), **COA-FSA**, **AIS-E** (immunizations), **TRC** (transitions of care), **FMC** (follow-up after ED visit), **PCR** (readmissions).
 
@@ -215,6 +217,16 @@ The production layer on top of the measure engine (`app/hedis/`, API under `/hed
 - Each one gets a root cause traced through the supplemental ledger (never submitted, in draft, awaiting acknowledgement, rejected, or accepted but not applied), plus an owner role, an action and its effect on the payer-reported rate.
 - Disputes are opened only for root causes the payer must fix.
 
+**Evidence normalizer.** Six source feeds (observations, procedures, claims, conditions, encounters, documents) plus verified workflow captures are mapped to canonical concepts and standard codes, parsed (BP `132/84` → systolic/diastolic, HbA1c mmol/mol → %), flagged (undated, implausible, denied, incomplete) and merged across sources into golden records with full lineage. On the extract: 9,797 records map at 100% into 4,383 golden records.
+
+**Supplied vs calculated QA.** Every supplied result is recalculated from the normalized evidence under the active measure version and classified (agree, supplied unsupported, evidence-compliant but supplied open, denominator mismatch, status difference). Measures are held to tolerance (≥ 95% agreement, ≤ 2-point rate gap); a second person signs off, and out-of-tolerance measures can only be rejected to the supplier. On the extract the QA exposes that KED, BCS-E, COL-E and TRC supplied results contradict their own source evidence.
+
+**Version control center.** Measure logic is a versioned specification (thresholds, age bands, look-backs, same-day rules): draft → review → approve (never the author) → activate with an effective date, with an impact analysis on the real population before approval, parameter diffs and rollback.
+
+**Review-to-closure workflow.** The extract's 505 care gaps are writable, each through the workflow for its type, with role-gated transitions, required fields and SLAs. Evidence captured in the workflow counts only after a second person verifies it, and a gap closes only when the measure recalculates as compliant (or by an approved disposition).
+
+The full design, mapped to the L1 workstream → L2 capability → L3 activity breakdown, is in [docs/HEDIS_WORKSTREAMS_DESIGN.md](docs/HEDIS_WORKSTREAMS_DESIGN.md).
+
 **AI agent layer.** Seven agents in three tiers, run by one orchestrator that enforces the tier policy.
 
 | Tier | Behaviour | Agents |
@@ -226,7 +238,7 @@ The production layer on top of the measure engine (`app/hedis/`, API under `/hed
 Each tier has a kill switch, repeated runs don't create duplicate work, and agents can't approve, sign or transmit anything. Determinations are rule-based. A language model (optional, `HEDIS_AGENT_LLM=1`) only rewrites the explanation a person reads.
 
 **NCQA certification readiness.**
-- **Controls:** 27 controls mapped to the HEDIS Compliance Audit standards (HD, IS 1.0–7.0) plus security. Each one checks live evidence: code systems, enrollment rule, NPIs, primary-source verification, file controls, acknowledgements, duplicates, audit chains, reproducibility, totals tie-out, reconciliation agreement, period lock, API authentication, segregation of duties and agent governance.
+- **Controls:** 31 controls mapped to the HEDIS Compliance Audit standards (HD, IS 1.0–7.0) plus security. Each one checks live evidence: code systems, enrollment rule, NPIs, primary-source verification, file controls, acknowledgements, duplicates, audit chains, reproducibility, totals tie-out, reconciliation agreement, period lock, API authentication, segregation of duties and agent governance.
 - **Attestations:** controls only a person can evidence (Roadmap, over-read sample, source documentation) need a signed attestation by the named role, and it expires.
 - **Output:** a readiness score, a history of dated assessments, and a Markdown/JSON evidence pack for the auditor.
 - **Honesty:** the readiness check says plainly that certification also needs licensed NCQA specifications, NCQA's test deck and an NCQA-licensed auditor. Control HD-1 fails until those exist.
@@ -272,7 +284,7 @@ Clinical_decision_support/
 │   ├── services/                EHR JSON store, transcription, SOAP helpers
 │   ├── vbc/                     300-patient HEDIS dataset loader and population dashboard
 │   ├── vbc_poc/                 quality-loop engine: catalog, engine, evidence, metrics, risk, service
-│   ├── hedis/                   registry, supplemental, reconciliation, ncqa, store, config
+│   ├── hedis/                   registry, versions, normalizer, calculator, qa, workflow, supplemental, reconciliation, ncqa, store
 │   │   └── agents/              tier policy, action catalogue, L1/L2/L3 agents, orchestrator
 │   ├── security/                HS256 tokens, role-based permissions, FastAPI require() dependency
 │   ├── scripts/build_kb.py      builds the RAG index
@@ -342,6 +354,7 @@ Create `Clinical_decision_support/.env` and never commit it.
 | `HEDIS_API_SECRET` | HS256 token-signing secret (≥ 32 characters), from your secret store | generated into `data/.hedis_api_secret` for local use |
 | `HEDIS_TOKEN_TTL_SECONDS` | Bearer-token lifetime | `1800` |
 | `HEDIS_STATE`, `HEDIS_OUTBOX` | HEDIS engine state file and payer-file outbox | `data/hedis_state.json`, `data/hedis_outbox/` |
+| `HEDIS_SOURCE_DATASET` | 300-member extract used by the evidence, QA, workflow and version workstreams | `data/vbc_300/synthetic_vbc_dataset_300_hedis.zip` |
 | `NUUCARE_ACCESS_STORE` | User and role store shared by the UI and the API | `data/access_control.json` |
 | `HEDIS_AGENT_LLM` | `1` lets the configured LLM rephrase agent explanations (never decisions) | `0` |
 

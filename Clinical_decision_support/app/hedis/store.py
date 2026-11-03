@@ -21,6 +21,9 @@ def empty_state() -> dict[str, Any]:
         "reconciliation": {"runs": {}, "disputes": {}, "tasks": {}},
         "agents": {"enabled": {"L1": True, "L2": True, "L3": True}, "proposals": {}, "runs": [], "priorities": [], "dq_tasks": {}},
         "ncqa": {"attestations": {}, "assessments": []},
+        "versions": {"specs": {}, "active": None},
+        "quality": {"runs": [], "signoffs": {}},
+        "workflow": {"gaps": {}, "seeded_from": None, "evidence": {}},
         "access_log": [], "audit": [],
     }
 

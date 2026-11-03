@@ -81,6 +81,10 @@ PAGE_MODULES = {
     "hedis_reconciliation": "Payer Reconciliation",
     "hedis_agents": "AI Agent Console",
     "hedis_ncqa": "NCQA Readiness",
+    "hedis_evidence": "Evidence & Quality",
+    "hedis_qa": "Evidence & Quality",
+    "hedis_workflow": "Care Gap Workflow",
+    "hedis_versions": "Measure Versioning",
 }
 
 

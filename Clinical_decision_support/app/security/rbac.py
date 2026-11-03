@@ -29,6 +29,14 @@ PERMISSIONS = {
     "ncqa:read": ("NCQA Readiness", "View"),
     "ncqa:assess": ("NCQA Readiness", "Edit"),
     "ncqa:attest": ("NCQA Readiness", "Approve"),
+    "evidence:read": ("Evidence & Quality", "View"),
+    "evidence:run": ("Evidence & Quality", "Edit"),
+    "qa:signoff": ("Evidence & Quality", "Approve"),
+    "workflow:read": ("Care Gap Workflow", "View"),
+    "workflow:edit": ("Care Gap Workflow", "Edit"),
+    "versions:read": ("Measure Versioning", "View"),
+    "versions:draft": ("Measure Versioning", "Edit"),
+    "versions:approve": ("Measure Versioning", "Approve"),
 }
 # Minimum necessary: these roles work with identified members; everyone else sees member IDs only.
 PHI_ROLES = ("Super Admin", "HEDIS Analyst", "HEDIS Lead", "Auditor", "Care Manager", "Physician / APP", "Clinical Reviewer", "Abstractor")

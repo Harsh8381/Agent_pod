@@ -9,7 +9,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app import hedis  # noqa: F401  (package docstring documents the scope)
-from app.hedis import agents, ncqa, reconciliation, registry, store, supplemental
+from app.hedis import agents, ncqa, qa, reconciliation, registry, store, supplemental, versions, workflow
 from app.hedis.errors import Conflict, HedisError, NotFound, SegregationOfDuties
 from app.security import rbac, tokens
 from app.security.api import require
@@ -333,3 +333,157 @@ def audit_log(limit: int = Query(200, ge=1, le=2000), principal: Principal = Dep
     state = store.load()
     intact, broken_at = store.verify_chain(state)
     return {"chain_intact": intact, "broken_at": broken_at, "events": state["audit"][-limit:], "access_log": state["access_log"][-limit:]}
+
+
+# ---------------------------------------------------------------------------
+# Evidence & quality: cross-source normalization, supplied vs calculated QA
+# ---------------------------------------------------------------------------
+
+
+class SignOffIn(BaseModel):
+    decision: Literal["ACCEPTED", "REJECTED"]
+    note: str
+
+
+@router.get("/evidence/normalization")
+def normalization_report(principal: Principal = Depends(require("evidence:read"))):
+    from app.hedis import normalizer
+
+    result = normalizer.normalize(versions._workflow_evidence(store.load()))
+    return {key: value for key, value in result.items() if key not in ("evidence", "by_patient")}
+
+
+@router.get("/evidence/patients/{patient_id}")
+def patient_evidence(patient_id: str, principal: Principal = Depends(require("evidence:read"))):
+    from app.hedis import normalizer
+
+    records = normalizer.normalize(versions._workflow_evidence(store.load()))["by_patient"].get(patient_id)
+    if records is None:
+        raise HTTPException(status_code=404, detail=f"No evidence for {patient_id}.")
+    return [record.to_dict() for record in records]
+
+
+@router.get("/qa")
+def qa_compare(principal: Principal = Depends(require("evidence:read"))):
+    return _call(qa.compare)
+
+
+@router.post("/qa/runs")
+def qa_run(principal: Principal = Depends(require("evidence:run"))):
+    return _call(qa.record_run, principal.actor)["run"]
+
+
+@router.post("/qa/runs/{run_id}/signoff")
+def qa_signoff(run_id: str, body: SignOffIn, principal: Principal = Depends(require("qa:signoff"))):
+    return _call(qa.sign_off, run_id, principal.actor, body.decision, body.note)
+
+
+# ---------------------------------------------------------------------------
+# Care-gap management: review-to-closure workflow
+# ---------------------------------------------------------------------------
+
+
+class TransitionIn(BaseModel):
+    to: str
+    fields: dict = Field(default_factory=dict, description="note, assignee, channel, schedule_date, service_date, value, value2, result_flag, ...")
+
+
+class DispositionIn(BaseModel):
+    disposition: Literal["PATIENT_DECLINED", "UNABLE_TO_CONTACT", "EXCLUSION_CANDIDATE"]
+    note: str
+
+
+@router.get("/workflow")
+def workflow_summary(principal: Principal = Depends(require("workflow:read"))):
+    return _call(workflow.summary)
+
+
+@router.get("/workflow/gaps")
+def workflow_gaps(gap_type: str | None = None, status: str | None = None, measure_id: str | None = None, overdue_only: bool = False,
+                  include_closed: bool = False, principal: Principal = Depends(require("workflow:read"))):
+    return _call(workflow.list_gaps, gap_type=gap_type, status=status, measure_id=measure_id, overdue_only=overdue_only,
+                 include_closed=include_closed)
+
+
+@router.get("/workflow/gaps/{gap_id}")
+def workflow_gap(gap_id: str, principal: Principal = Depends(require("workflow:read"))):
+    return _call(workflow.detail, gap_id)
+
+
+@router.post("/workflow/gaps/{gap_id}/transition")
+def workflow_transition(gap_id: str, body: TransitionIn, principal: Principal = Depends(require("workflow:edit"))):
+    store_ = rbac.load_store()
+    return _call(workflow.transition, gap_id, body.to, principal.actor, principal.role,
+                 lambda module, action: rbac.module_allowed(principal, module, action, store_), body.fields)
+
+
+@router.post("/workflow/gaps/{gap_id}/disposition")
+def workflow_disposition(gap_id: str, body: DispositionIn, principal: Principal = Depends(require("workflow:edit"))):
+    store_ = rbac.load_store()
+    return _call(workflow.close_with_disposition, gap_id, body.disposition, principal.actor,
+                 lambda module, action: rbac.module_allowed(principal, module, action, store_), body.note)
+
+
+# ---------------------------------------------------------------------------
+# Governance: measure version control center
+# ---------------------------------------------------------------------------
+
+
+class DraftIn(BaseModel):
+    based_on: str
+    changes: dict = Field(..., description='{"GSD.numerator.target_lt": 9.0}')
+    rationale: str
+
+
+class ActivateIn(BaseModel):
+    effective_date: str | None = None
+
+
+class RollbackIn(BaseModel):
+    to_version: str
+    reason: str
+
+
+@router.get("/versions")
+def versions_view(principal: Principal = Depends(require("versions:read"))):
+    return versions.view()
+
+
+@router.get("/versions/diff")
+def versions_diff(a: str, b: str, principal: Principal = Depends(require("versions:read"))):
+    return _call(versions.diff, a, b)
+
+
+@router.post("/versions")
+def versions_draft(body: DraftIn, principal: Principal = Depends(require("versions:draft"))):
+    return _call(versions.create_draft, body.based_on, body.changes, principal.actor, body.rationale)
+
+
+@router.post("/versions/{version_id}/submit")
+def versions_submit(version_id: str, principal: Principal = Depends(require("versions:draft"))):
+    return _call(versions.submit, version_id, principal.actor)
+
+
+@router.post("/versions/{version_id}/impact")
+def versions_impact(version_id: str, principal: Principal = Depends(require("versions:draft"))):
+    return _call(versions.analyze_impact, version_id, principal.actor)
+
+
+@router.post("/versions/{version_id}/approve")
+def versions_approve(version_id: str, body: Note | None = None, principal: Principal = Depends(require("versions:approve"))):
+    return _call(versions.approve, version_id, principal.actor, (body or Note()).note)
+
+
+@router.post("/versions/{version_id}/reject")
+def versions_reject(version_id: str, body: Note, principal: Principal = Depends(require("versions:approve"))):
+    return _call(versions.reject, version_id, principal.actor, body.note)
+
+
+@router.post("/versions/{version_id}/activate")
+def versions_activate(version_id: str, body: ActivateIn | None = None, principal: Principal = Depends(require("versions:approve"))):
+    return _call(versions.activate, version_id, principal.actor, (body or ActivateIn()).effective_date)
+
+
+@router.post("/versions/rollback")
+def versions_rollback(body: RollbackIn, principal: Principal = Depends(require("versions:approve"))):
+    return _call(versions.rollback, body.to_version, principal.actor, body.reason)

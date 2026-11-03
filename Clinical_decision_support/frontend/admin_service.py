@@ -91,6 +91,24 @@ HEDIS_GRANTS = {
         "Edit": ("HEDIS Analyst", "HEDIS Lead"),
         "Approve": ("HEDIS Lead",),
     },
+    # Evidence & quality: run normalization and supplied-vs-calculated QA (Edit); sign the QA off (Approve).
+    "Evidence & Quality": {
+        "View": ("HEDIS Analyst", "HEDIS Lead", "Stars / Contract", "Executive", "Auditor", "Operations Admin"),
+        "Edit": ("HEDIS Analyst", "HEDIS Lead"),
+        "Approve": ("HEDIS Lead",),
+    },
+    # Care-gap management: work gaps (Edit); verify evidence and approve dispositions (Approve).
+    "Care Gap Workflow": {
+        "View": ("Care Manager", "HEDIS Analyst", "HEDIS Lead", "Physician / APP", "Abstractor", "Pharmacist", "Auditor", "Operations Admin"),
+        "Edit": ("Care Manager", "HEDIS Analyst", "HEDIS Lead", "Physician / APP", "Abstractor", "Pharmacist"),
+        "Approve": ("HEDIS Analyst", "HEDIS Lead", "Physician / APP"),
+    },
+    # Governance: draft measure versions (Edit); approve, activate or roll back (Approve, never the author).
+    "Measure Versioning": {
+        "View": ("HEDIS Analyst", "HEDIS Lead", "Stars / Contract", "Auditor", "Operations Admin"),
+        "Edit": ("HEDIS Analyst", "HEDIS Lead"),
+        "Approve": ("HEDIS Lead", "Operations Admin"),
+    },
 }
 HEDIS_MODULES = tuple(HEDIS_GRANTS)
 MODULES = CLINICAL_MODULES + VBC_MODULES + (POC_MODULE,) + HEDIS_MODULES

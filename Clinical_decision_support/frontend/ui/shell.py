@@ -91,14 +91,27 @@ VBC_NAV = (
             ("vbcpoc_governance", "Audit & demo", ":material/verified:"),
         ),
     ),
+    # HEDIS engine, organised by workstream (L1) -> capability (L2) -> activity (L3)
     (
-        "HEDIS engine",
+        "Evidence & quality",
+        (
+            ("hedis_evidence", "Evidence normalizer", ":material/merge_type:"),
+            ("hedis_qa", "Supplied vs calculated QA", ":material/rule_settings:"),
+        ),
+    ),
+    (
+        "Care gap management",
+        (("hedis_workflow", "Review-to-closure workflow", ":material/account_tree:"),),
+    ),
+    (
+        "Governance",
         (
             ("hedis_registry", "HEDIS registry", ":material/table_view:"),
-            ("hedis_supplemental", "Supplemental submission", ":material/outbox:"),
+            ("hedis_versions", "Version control center", ":material/history_edu:"),
             ("hedis_reconciliation", "Payer reconciliation", ":material/sync_alt:"),
-            ("hedis_agents", "AI agent console", ":material/smart_toy:"),
+            ("hedis_supplemental", "Supplemental submission", ":material/outbox:"),
             ("hedis_ncqa", "NCQA readiness", ":material/workspace_premium:"),
+            ("hedis_agents", "AI agent console", ":material/smart_toy:"),
         ),
     ),
     (
@@ -160,7 +173,8 @@ TOP_NAV_GROUP = {
     "vbcpoc_dashboard": "vbcpoc_dashboard", "vbcpoc_patient": "vbcpoc_dashboard", "vbcpoc_gaps": "vbcpoc_dashboard",
     "vbcpoc_governance": "vbcpoc_dashboard",
     "hedis_registry": "hedis_registry", "hedis_supplemental": "hedis_registry", "hedis_reconciliation": "hedis_registry",
-    "hedis_agents": "hedis_registry", "hedis_ncqa": "hedis_registry",
+    "hedis_agents": "hedis_registry", "hedis_ncqa": "hedis_registry", "hedis_evidence": "hedis_registry", "hedis_qa": "hedis_registry",
+    "hedis_workflow": "hedis_registry", "hedis_versions": "hedis_registry",
 }
 WORKFLOW_HELP = {
     "clinical": (
